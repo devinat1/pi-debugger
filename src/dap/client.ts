@@ -1,4 +1,5 @@
 import { Socket } from "node:net"
+import { booleanValue, numberValue, recordValue, stringValue } from "../util/value"
 import type { DapMessage, Event, Request, Response } from "./types"
 
 type EventHandler = (body: Record<string, unknown>) => void
@@ -8,7 +9,7 @@ const REQUEST_TIMEOUT = 30_000
 /** A small DAP client using Content-Length framing over TCP. */
 export class DapClient {
   private socket = new Socket()
-  private seq = 1
+  private sequence = 1
   private pending = new Map<
     number,
     {
@@ -19,12 +20,9 @@ export class DapClient {
   >()
   private eventHandlers = new Map<string, Set<EventHandler>>()
   private buffer = Buffer.alloc(0)
-  private connected = false
+  private isConnected = false
 
-  constructor(
-    private host: string,
-    private port: number,
-  ) {}
+  constructor(private connection: { host: string; port: number }) {}
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -33,69 +31,71 @@ export class DapClient {
         reject(error)
       }
       this.socket.once("error", onError)
-      this.socket.connect(this.port, this.host, () => {
+      this.socket.connect(this.connection, () => {
         this.socket.off("error", onError)
-        this.connected = true
+        this.isConnected = true
         resolve()
       })
       this.socket.on("error", (error) => {
-        if (this.connected) this.rejectPending(error)
+        if (this.isConnected) this.rejectPending(error)
       })
       this.socket.on("data", (data) => this.onData(data))
       this.socket.on("close", () => {
-        this.connected = false
-        this.rejectPending(new Error("Debugger connection closed"))
+        this.isConnected = false
+        this.rejectPending(new Error("Debugger connection closed."))
       })
     })
   }
 
-  async sendRequest(
-    command: string,
-    args?: Record<string, unknown>,
-  ): Promise<Response> {
-    if (!this.connected) throw new Error("Debugger is not connected")
-    const seq = this.seq++
+  async sendRequest(options: {
+    command: string
+    arguments?: Record<string, unknown>
+  }): Promise<Response> {
+    if (!this.isConnected) throw new Error("Debugger is not connected.")
+    const sequence = this.sequence++
     const request: Request = {
-      seq,
+      seq: sequence,
       type: "request",
-      command,
-      arguments: args,
+      command: options.command,
+      arguments: options.arguments,
     }
     const json = JSON.stringify(request)
     const header = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n`
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(seq)
-        reject(new Error(`Timed out waiting for DAP response to ${command}`))
+        this.pending.delete(sequence)
+        reject(
+          new Error(`Timed out waiting for DAP response to ${options.command}.`),
+        )
       }, REQUEST_TIMEOUT)
-      this.pending.set(seq, { resolve, reject, timer })
+      this.pending.set(sequence, { resolve, reject, timer })
       this.socket.write(header + json)
     })
   }
 
-  on(event: string, handler: EventHandler): void {
-    const handlers = this.eventHandlers.get(event) ?? new Set<EventHandler>()
-    handlers.add(handler)
-    this.eventHandlers.set(event, handlers)
+  on(options: { event: string; handler: EventHandler }): void {
+    const handlers = this.eventHandlers.get(options.event) ?? new Set<EventHandler>()
+    handlers.add(options.handler)
+    this.eventHandlers.set(options.event, handlers)
   }
 
-  off(event: string, handler: EventHandler): void {
-    this.eventHandlers.get(event)?.delete(handler)
+  off(options: { event: string; handler: EventHandler }): void {
+    this.eventHandlers.get(options.event)?.delete(options.handler)
   }
 
-  once(event: string): Promise<Record<string, unknown>> {
+  once(options: { event: string }): Promise<Record<string, unknown>> {
     return new Promise((resolve) => {
       const handler = (body: Record<string, unknown>) => {
-        this.off(event, handler)
+        this.off({ event: options.event, handler })
         resolve(body)
       }
-      this.on(event, handler)
+      this.on({ event: options.event, handler })
     })
   }
 
   async disconnect(): Promise<void> {
     this.socket.destroy()
-    this.connected = false
+    this.isConnected = false
   }
 
   private onData(data: Buffer): void {
@@ -119,7 +119,8 @@ export class DapClient {
         .toString()
       this.buffer = this.buffer.subarray(contentStart + contentLength)
       try {
-        this.handleMessage(JSON.parse(content) as DapMessage)
+        const message = parseDapMessage(JSON.parse(content))
+        if (message) this.handleMessage(message)
       } catch {
         // Ignore malformed adapter output and keep reading framed messages.
       }
@@ -137,21 +138,60 @@ export class DapClient {
         return
       }
       pending.reject(
-        new Error(message.message ?? `DAP request failed: ${message.command}`),
+        new Error(message.message ?? `DAP request failed: ${message.command}.`),
       )
       return
     }
     if (message.type !== "event") return
-    for (const handler of this.eventHandlers.get(message.event) ?? []) {
+    const handlers = this.eventHandlers.get(message.event) ?? []
+    Array.from(handlers).forEach((handler) => {
       handler(message.body ?? {})
-    }
+    })
   }
 
   private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
+    Array.from(this.pending.values()).forEach((pending) => {
       clearTimeout(pending.timer)
       pending.reject(error)
-    }
+    })
     this.pending.clear()
+  }
+}
+
+function parseDapMessage(value: unknown): DapMessage | undefined {
+  const message = recordValue(value)
+  const sequence = numberValue(message?.seq)
+  const type = stringValue(message?.type)
+  if (sequence === undefined) return undefined
+  if (type === "event") {
+    const event = stringValue(message?.event)
+    if (!event) return undefined
+    return { seq: sequence, type, event, body: recordValue(message?.body) }
+  }
+  if (type === "response") {
+    const requestSequence = numberValue(message?.request_seq)
+    const isSuccessful = booleanValue(message?.success)
+    const command = stringValue(message?.command)
+    if (requestSequence === undefined || isSuccessful === undefined || !command) {
+      return undefined
+    }
+    return {
+      seq: sequence,
+      type,
+      request_seq: requestSequence,
+      success: isSuccessful,
+      command,
+      message: stringValue(message?.message),
+      body: recordValue(message?.body),
+    }
+  }
+  if (type !== "request") return undefined
+  const command = stringValue(message?.command)
+  if (!command) return undefined
+  return {
+    seq: sequence,
+    type,
+    command,
+    arguments: recordValue(message?.arguments),
   }
 }

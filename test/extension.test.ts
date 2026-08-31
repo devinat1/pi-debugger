@@ -1,20 +1,19 @@
 import { describe, expect, it } from "bun:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import piDebugger from "../extensions/pi-debugger"
+import { registerDebuggerTools } from "../src/tools"
 
 describe("pi extension", () => {
   it("registers the complete native debugger tool surface", () => {
-    const names: string[] = []
-    const pi = {
-      registerTool(tool: { name: string }) {
-        names.push(tool.name)
+    const registeredToolNames = new Set<string>()
+    const extensionApi: Pick<ExtensionAPI, "registerTool"> = {
+      registerTool(tool) {
+        registeredToolNames.add(tool.name)
       },
-      on() {},
-    } as unknown as ExtensionAPI
+    }
 
-    piDebugger(pi)
+    registerDebuggerTools(extensionApi)
 
-    expect(names).toEqual([
+    expect(Array.from(registeredToolNames)).toEqual([
       "debug_start_session",
       "debug_attach_session",
       "debug_stop_session",

@@ -21,31 +21,40 @@ const python = spawn(
 )
 
 try {
-  const launched = await manager.launch(
-    { type: "node", program: nodeProgram },
-    "launched-node",
-  )
-  const attached = await manager.attach(
-    { type: "python", port: pythonPort },
-    "attached-python",
-  )
-  if (manager.list().length !== 2) throw new Error("Expected two live sessions")
+  const launched = await manager.launch({
+    config: { type: "node", program: nodeProgram },
+    name: "launched-node",
+  })
+  const attached = await manager.attach({
+    config: { type: "python", port: pythonPort },
+    name: "attached-python",
+  })
+  if (manager.list().length !== 2) throw new Error("Expected two live sessions.")
 
-  await launched.session.adapter.setBreakpoints(nodeProgram, [{ line: 3 }])
-  await attached.session.adapter.setBreakpoints(pythonProgram, [{ line: 3 }])
+  await launched.session.adapter.setBreakpoints({
+    file: nodeProgram,
+    breakpoints: [{ line: 3 }],
+  })
+  await attached.session.adapter.setBreakpoints({
+    file: pythonProgram,
+    breakpoints: [{ line: 3 }],
+  })
   const nodeStop = await launched.session.adapter.continue()
   const pythonStop = await attached.session.adapter.continue()
-  console.log({
-    sessions: manager.list().map((session) => ({ id: session.id, name: session.name })),
-    nodeStop,
-    pythonStop,
-    nodeVariables: await manager.require(launched.session.id).adapter.getVariables(),
-    pythonVariables: await manager.require(attached.session.id).adapter.getVariables(),
-  })
+  console.log(
+    "Two debugger sessions completed independently.",
+    {
+      sessions: manager.list().map((session) => ({ id: session.id, name: session.name })),
+      nodeStop,
+      pythonStop,
+      nodeVariables: await manager.require(launched.session.id).adapter.getVariables(),
+      pythonVariables: await manager.require(attached.session.id).adapter.getVariables(),
+    },
+  )
 
   await manager.stop(launched.session.id)
   if (manager.require(attached.session.id).name !== "attached-python") {
-    throw new Error("Stopping one session affected the other")
+    throw new Error("Stopping one session affected the other.")
   }
 } finally {
   await manager.stopAll()

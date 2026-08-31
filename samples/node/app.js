@@ -3,5 +3,5 @@ function add(a, b) {
   return total
 }
 
-console.log(`initial: ${add(2, 3)}`)
-setInterval(() => console.log(`tick: ${add(4, 5)}`), 1_000)
+console.log(`Initial total: ${add(2, 3)}.`)
+setInterval(() => console.log(`Tick total: ${add(4, 5)}.`), 1_000)

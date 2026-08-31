@@ -1,6 +1,6 @@
 {
   "name": "@devinat1/pi-debugger",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native DAP debugger tools for the pi coding agent",
   "type": "module",
   "license": "MIT",

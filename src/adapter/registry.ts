@@ -3,9 +3,9 @@ import { GoAdapter } from "./go"
 import { NodeAdapter } from "./node"
 import { PythonAdapter } from "./python"
 
-export function createAdapter(type: AdapterType): DebugAdapter {
-  if (type === "node") return new NodeAdapter()
-  if (type === "python") return new PythonAdapter()
+export function createAdapter(adapterType: AdapterType): DebugAdapter {
+  if (adapterType === "node") return new NodeAdapter()
+  if (adapterType === "python") return new PythonAdapter()
   return new GoAdapter()
 }
 
@@ -16,4 +16,8 @@ export function detectType(program: string): AdapterType {
   throw new Error(
     `Cannot detect debugger for ${program}. Specify node, python, or go.`,
   )
+}
+
+export function isAdapterType(value?: string): value is AdapterType {
+  return value === "node" || value === "python" || value === "go"
 }

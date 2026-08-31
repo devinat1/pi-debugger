@@ -1,43 +1,61 @@
 import type { ChildProcess } from "node:child_process"
 import { DapClient } from "../dap/client"
-import type { SourceBreakpoint, StackFrame, Variable } from "../dap/types"
+import type { StackFrame, Variable } from "../dap/types"
 import type {
   BreakpointResult,
   DebugAdapter,
   EvalResult,
+  EvaluateOptions,
+  GetVariablesOptions,
+  SetBreakpointsOptions,
   StopResult,
   StoppedInfo,
+  ThreadOptions,
 } from "./base"
+import {
+  arrayValue,
+  booleanValue,
+  numberValue,
+  recordValue,
+  stringValue,
+} from "../util/value"
 
 const WAIT_TIMEOUT = 30_000
+const DISCONNECT_TIMEOUT = 1_000
 
 export abstract class TcpDapAdapter
   implements Omit<DebugAdapter, "id" | "launch" | "attach">
 {
   protected client: DapClient | null = null
   protected adapterProcess: ChildProcess | null = null
-  protected terminateDebuggee = false
+  protected shouldTerminateDebuggee = false
   protected threadId = 1
   protected frameIds: number[] = []
-  protected paused = false
-  private stoppedCallbacks: Array<(event: StoppedInfo) => void> = []
+  protected isPaused = false
+  private stoppedCallbacks = new Set<(event: StoppedInfo) => void>()
   private initialPausePromise: Promise<StopResult> | null = null
 
   protected useClient(client: DapClient): void {
     this.client = client
-    client.on("stopped", (body) => {
-      this.paused = true
-      this.threadId = numberValue(body.threadId) ?? 1
-      const info = {
-        reason: stringValue(body.reason) ?? "breakpoint",
-        threadId: this.threadId,
-        description: stringValue(body.description),
+    client.on({
+      event: "stopped",
+      handler: (body) => {
+        this.isPaused = true
+        this.threadId = numberValue(body.threadId) ?? 1
+        const info = {
+          reason: stringValue(body.reason) ?? "breakpoint",
+          threadId: this.threadId,
+          description: stringValue(body.description),
+        }
+        this.stoppedCallbacks.forEach((callback) => callback(info))
       }
-      for (const callback of this.stoppedCallbacks) callback(info)
     })
-    client.on("continued", () => {
-      this.paused = false
-      this.frameIds = []
+    client.on({
+      event: "continued",
+      handler: () => {
+        this.isPaused = false
+        this.frameIds = []
+      },
     })
   }
 
@@ -46,38 +64,47 @@ export abstract class TcpDapAdapter
   }
 
   protected async initialize(adapterID: string): Promise<void> {
-    await this.requireClient().sendRequest("initialize", {
-      clientID: "pi-debugger",
-      clientName: "pi Debugger",
-      adapterID,
-      pathFormat: "path",
-      linesStartAt1: true,
-      columnsStartAt1: true,
-      supportsRunInTerminalRequest: false,
+    await this.requireClient().sendRequest({
+      command: "initialize",
+      arguments: {
+        clientID: "pi-debugger",
+        clientName: "pi Debugger",
+        adapterID,
+        pathFormat: "path",
+        linesStartAt1: true,
+        columnsStartAt1: true,
+        supportsRunInTerminalRequest: false,
+      },
     })
   }
 
-  protected async configure(
-    command: "launch" | "attach",
-    args: Record<string, unknown>,
-  ): Promise<void> {
+  protected async configure(options: {
+    command: "launch" | "attach"
+    arguments: Record<string, unknown>
+  }): Promise<void> {
     const client = this.requireClient()
-    const initialized = client.once("initialized")
-    const configured = client.sendRequest(command, args)
+    const initialized = client.once({ event: "initialized" })
+    const configured = client.sendRequest(options)
     await initialized
-    await client.sendRequest("configurationDone", {})
+    await client.sendRequest({ command: "configurationDone", arguments: {} })
     await configured
   }
 
   protected async pauseAttachedTarget(): Promise<void> {
-    if (this.paused) return
-    const response = await this.requireClient().sendRequest("threads", {})
+    if (this.isPaused) return
+    const response = await this.requireClient().sendRequest({
+      command: "threads",
+      arguments: {},
+    })
     const threads = arrayValue(response.body?.threads)
     const thread = recordValue(threads[0])
     const threadId = numberValue(thread?.id)
     if (!threadId) return
     this.threadId = threadId
-    await this.requireClient().sendRequest("pause", { threadId })
+    await this.requireClient().sendRequest({
+      command: "pause",
+      arguments: { threadId },
+    })
   }
 
   async waitForInitialPause(): Promise<StopResult> {
@@ -88,12 +115,14 @@ export abstract class TcpDapAdapter
   }
 
   async setBreakpoints(
-    file: string,
-    breakpoints: SourceBreakpoint[],
+    options: SetBreakpointsOptions,
   ): Promise<BreakpointResult[]> {
-    const response = await this.requireClient().sendRequest("setBreakpoints", {
-      source: { path: file },
-      breakpoints,
+    const response = await this.requireClient().sendRequest({
+      command: "setBreakpoints",
+      arguments: {
+        source: { path: options.file },
+        breakpoints: options.breakpoints,
+      },
     })
     return arrayValue(response.body?.breakpoints).map((value) => {
       const breakpoint = recordValue(value) ?? {}
@@ -106,27 +135,30 @@ export abstract class TcpDapAdapter
     })
   }
 
-  async continue(threadId?: number): Promise<StopResult> {
-    return this.resume("continue", threadId)
+  async continue(options?: ThreadOptions): Promise<StopResult> {
+    return this.resume({ command: "continue", threadId: options?.threadId })
   }
 
-  async stepOver(threadId?: number): Promise<StopResult> {
-    return this.resume("next", threadId)
+  async stepOver(options?: ThreadOptions): Promise<StopResult> {
+    return this.resume({ command: "next", threadId: options?.threadId })
   }
 
-  async stepIn(threadId?: number): Promise<StopResult> {
-    return this.resume("stepIn", threadId)
+  async stepIn(options?: ThreadOptions): Promise<StopResult> {
+    return this.resume({ command: "stepIn", threadId: options?.threadId })
   }
 
-  async stepOut(threadId?: number): Promise<StopResult> {
-    return this.resume("stepOut", threadId)
+  async stepOut(options?: ThreadOptions): Promise<StopResult> {
+    return this.resume({ command: "stepOut", threadId: options?.threadId })
   }
 
-  async getCallStack(threadId?: number): Promise<StackFrame[]> {
-    const response = await this.requireClient().sendRequest("stackTrace", {
-      threadId: threadId ?? this.threadId,
-      startFrame: 0,
-      levels: 50,
+  async getCallStack(options?: ThreadOptions): Promise<StackFrame[]> {
+    const response = await this.requireClient().sendRequest({
+      command: "stackTrace",
+      arguments: {
+        threadId: options?.threadId ?? this.threadId,
+        startFrame: 0,
+        levels: 50,
+      },
     })
     const frames = arrayValue(response.body?.stackFrames)
       .map(recordValue)
@@ -159,23 +191,21 @@ export abstract class TcpDapAdapter
     })
   }
 
-  async getVariables(
-    frameId?: number,
-    scope?: string,
-    _maxDepth?: number,
-  ): Promise<Variable[]> {
+  async getVariables(options?: GetVariablesOptions): Promise<Variable[]> {
     if (this.frameIds.length === 0) await this.getCallStack()
-    const targetFrameId = frameId ?? this.frameIds[0]
+    const targetFrameId = options?.frameId ?? this.frameIds[0]
     if (targetFrameId === undefined) return []
-    const scopesResponse = await this.requireClient().sendRequest("scopes", {
-      frameId: targetFrameId,
+    const scopesResponse = await this.requireClient().sendRequest({
+      command: "scopes",
+      arguments: { frameId: targetFrameId },
     })
     const scopes = arrayValue(scopesResponse.body?.scopes)
       .map(recordValue)
       .filter((item) => item !== undefined)
-    const selected = scope
+    const selected = options?.scope
       ? scopes.filter(
-          (item) => stringValue(item.name)?.toLowerCase() === scope.toLowerCase(),
+          (item) =>
+            stringValue(item.name)?.toLowerCase() === options.scope?.toLowerCase(),
         )
       : scopes.filter((item) =>
           stringValue(item.name)?.toLowerCase().includes("local"),
@@ -184,8 +214,9 @@ export abstract class TcpDapAdapter
       (selected.length > 0 ? selected : scopes.slice(0, 1)).map(async (item) => {
         const variablesReference = numberValue(item.variablesReference)
         if (variablesReference === undefined) return []
-        const response = await this.requireClient().sendRequest("variables", {
-          variablesReference,
+        const response = await this.requireClient().sendRequest({
+          command: "variables",
+          arguments: { variablesReference },
         })
         return arrayValue(response.body?.variables).flatMap((value) => {
           const variable = recordValue(value)
@@ -206,12 +237,15 @@ export abstract class TcpDapAdapter
     return variables.flat()
   }
 
-  async evaluate(expression: string, frameId?: number): Promise<EvalResult> {
-    if (this.frameIds.length === 0 && this.paused) await this.getCallStack()
-    const response = await this.requireClient().sendRequest("evaluate", {
-      expression,
-      frameId: frameId ?? this.frameIds[0],
-      context: "repl",
+  async evaluate(options: EvaluateOptions): Promise<EvalResult> {
+    if (this.frameIds.length === 0 && this.isPaused) await this.getCallStack()
+    const response = await this.requireClient().sendRequest({
+      command: "evaluate",
+      arguments: {
+        expression: options.expression,
+        frameId: options.frameId ?? this.frameIds[0],
+        context: "repl",
+      },
     })
     return {
       result: stringValue(response.body?.result) ?? "",
@@ -224,10 +258,11 @@ export abstract class TcpDapAdapter
     if (this.client) {
       try {
         await Promise.race([
-          this.client.sendRequest("disconnect", {
-            terminateDebuggee: this.terminateDebuggee,
+          this.client.sendRequest({
+            command: "disconnect",
+            arguments: { terminateDebuggee: this.shouldTerminateDebuggee },
           }),
-          new Promise((resolve) => setTimeout(resolve, 1_000)),
+          new Promise((resolve) => setTimeout(resolve, DISCONNECT_TIMEOUT)),
         ])
       } catch {
         // The adapter may already be gone after target termination.
@@ -240,17 +275,18 @@ export abstract class TcpDapAdapter
   }
 
   onStopped(callback: (event: StoppedInfo) => void): void {
-    this.stoppedCallbacks.push(callback)
+    this.stoppedCallbacks.add(callback)
   }
 
-  private async resume(
-    command: "continue" | "next" | "stepIn" | "stepOut",
-    threadId?: number,
-  ): Promise<StopResult> {
+  private async resume(options: {
+    command: "continue" | "next" | "stepIn" | "stepOut"
+    threadId?: number
+  }): Promise<StopResult> {
     const stopped = this.waitForStop()
-    this.paused = false
-    await this.requireClient().sendRequest(command, {
-      threadId: threadId ?? this.threadId,
+    this.isPaused = false
+    await this.requireClient().sendRequest({
+      command: options.command,
+      arguments: { threadId: options.threadId ?? this.threadId },
     })
     return stopped
   }
@@ -259,19 +295,18 @@ export abstract class TcpDapAdapter
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup()
-        reject(new Error("Timed out waiting for debugger to stop"))
+        reject(new Error("Timed out waiting for debugger to stop."))
       }, WAIT_TIMEOUT)
       const cleanup = () => {
         clearTimeout(timer)
-        const index = this.stoppedCallbacks.indexOf(handler)
-        if (index >= 0) this.stoppedCallbacks.splice(index, 1)
-        this.client?.off("terminated", terminated)
-        this.client?.off("exited", terminated)
+        this.stoppedCallbacks.delete(handler)
+        this.client?.off({ event: "terminated", handler: terminated })
+        this.client?.off({ event: "exited", handler: terminated })
       }
       const handler = async (info: StoppedInfo) => {
         cleanup()
         try {
-          const topFrame = (await this.getCallStack(info.threadId))[0]
+          const topFrame = (await this.getCallStack({ threadId: info.threadId }))[0]
           resolve({
             reason: info.reason,
             description: info.description,
@@ -293,35 +328,14 @@ export abstract class TcpDapAdapter
         cleanup()
         resolve({ reason: "terminated", terminated: true })
       }
-      this.stoppedCallbacks.push(handler)
-      this.client?.on("terminated", terminated)
-      this.client?.on("exited", terminated)
+      this.stoppedCallbacks.add(handler)
+      this.client?.on({ event: "terminated", handler: terminated })
+      this.client?.on({ event: "exited", handler: terminated })
     })
   }
 
   private requireClient(): DapClient {
-    if (!this.client) throw new Error("Debugger is not connected")
+    if (!this.client) throw new Error("Debugger is not connected.")
     return this.client
   }
-}
-
-export function recordValue(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  return value as Record<string, unknown>
-}
-
-export function arrayValue(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
-
-export function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
-}
-
-export function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined
-}
-
-export function booleanValue(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined
 }

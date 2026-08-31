@@ -5,16 +5,18 @@ import type {
   BreakpointResult,
   DebugAdapter,
   EvalResult,
+  EvaluateOptions,
+  SetBreakpointsOptions,
   LaunchConfig,
   StopResult,
   StoppedInfo,
 } from "../../src/adapter/base"
-import type { SourceBreakpoint, StackFrame, Variable } from "../../src/dap/types"
+import type { StackFrame, Variable } from "../../src/dap/types"
 import { SessionManager } from "../../src/session/manager"
 
 class FakeAdapter implements DebugAdapter {
-  disconnected = false
-  readonly callbacks: Array<(event: StoppedInfo) => void> = []
+  isDisconnected = false
+  readonly callbacks = new Set<(event: StoppedInfo) => void>()
 
   constructor(readonly id: AdapterType) {}
 
@@ -24,10 +26,9 @@ class FakeAdapter implements DebugAdapter {
     return { reason: "entry", threadId: 1 }
   }
   async setBreakpoints(
-    _file: string,
-    breakpoints: SourceBreakpoint[],
+    options: SetBreakpointsOptions,
   ): Promise<BreakpointResult[]> {
-    return breakpoints.map((item) => ({ verified: true, line: item.line }))
+    return options.breakpoints.map((item) => ({ verified: true, line: item.line }))
   }
   async continue(): Promise<StopResult> {
     return { reason: "breakpoint" }
@@ -47,40 +48,45 @@ class FakeAdapter implements DebugAdapter {
   async getVariables(): Promise<Variable[]> {
     return []
   }
-  async evaluate(expression: string): Promise<EvalResult> {
-    return { result: expression }
+  async evaluate(options: EvaluateOptions): Promise<EvalResult> {
+    return { result: options.expression }
   }
   async disconnect(): Promise<void> {
-    this.disconnected = true
+    this.isDisconnected = true
   }
   onStopped(callback: (event: StoppedInfo) => void): void {
-    this.callbacks.push(callback)
+    this.callbacks.add(callback)
   }
 }
 
 describe("SessionManager", () => {
   it("keeps two sessions live and targets stop by sessionId", async () => {
-    const adapters: FakeAdapter[] = []
-    const manager = new SessionManager((type) => {
-      const adapter = new FakeAdapter(type)
-      adapters.push(adapter)
-      return adapter
-    })
+    const nodeAdapter = new FakeAdapter("node")
+    const goAdapter = new FakeAdapter("go")
+    const manager = new SessionManager((type) =>
+      type === "node" ? nodeAdapter : goAdapter,
+    )
 
-    const first = await manager.launch({ type: "node", program: "one.js" }, "one")
-    const second = await manager.attach({ type: "go", pid: 123 }, "two")
+    const first = await manager.launch({
+      config: { type: "node", program: "one.js" },
+      name: "one",
+    })
+    const second = await manager.attach({
+      config: { type: "go", pid: 123 },
+      name: "two",
+    })
 
     expect(manager.list().map((session) => session.id)).toEqual([
       first.session.id,
       second.session.id,
     ])
-    expect(adapters[0].disconnected).toBe(false)
-    expect(adapters[1].disconnected).toBe(false)
+    expect(nodeAdapter.isDisconnected).toBe(false)
+    expect(goAdapter.isDisconnected).toBe(false)
 
     await manager.stop(first.session.id)
 
-    expect(adapters[0].disconnected).toBe(true)
-    expect(adapters[1].disconnected).toBe(false)
+    expect(nodeAdapter.isDisconnected).toBe(true)
+    expect(goAdapter.isDisconnected).toBe(false)
     expect(manager.require(second.session.id).name).toBe("two")
   })
 })

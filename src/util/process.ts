@@ -2,6 +2,9 @@ import { accessSync, constants } from "node:fs"
 import { delimiter, isAbsolute, join } from "node:path"
 import { DapClient } from "../dap/client"
 
+const CONNECTION_TIMEOUT = 10_000
+const CONNECTION_RETRY_DELAY = 100
+
 export function findExecutable(name: string): string | null {
   if (isAbsolute(name) || name.includes("/")) {
     try {
@@ -24,20 +27,23 @@ export function findExecutable(name: string): string | null {
     }) ?? null
 }
 
-export async function connectDap(
-  host: string,
-  port: number,
-  timeout = 10_000,
-): Promise<DapClient> {
+export async function connectDap(options: {
+  host: string
+  port: number
+  timeout?: number
+}): Promise<DapClient> {
+  const timeout = options.timeout ?? CONNECTION_TIMEOUT
   const started = Date.now()
   while (Date.now() - started < timeout) {
-    const client = new DapClient(host, port)
+    const client = new DapClient({ host: options.host, port: options.port })
     try {
       await client.connect()
       return client
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAY))
     }
   }
-  throw new Error(`Timed out connecting to debugger at ${host}:${port}`)
+  throw new Error(
+    `Timed out connecting to debugger at ${options.host}:${options.port}.`,
+  )
 }

@@ -8,8 +8,8 @@ func add(a, b int) int {
 }
 
 func main() {
-	println("initial:", add(2, 3))
+	println("Initial total:", add(2, 3), ".")
 	for range time.Tick(time.Second) {
-		println("tick:", add(4, 5))
+		println("Tick total:", add(4, 5), ".")
 	}
 }

@@ -21,26 +21,29 @@ export interface SessionState {
   stoppedReason: string | null
 }
 
-export function createSessionState(
-  id: string,
-  adapter: DebugAdapter,
-  mode: "launch" | "attach",
-  name?: string,
-): SessionState {
+export function createSessionState(options: {
+  id: string
+  adapter: DebugAdapter
+  mode: "launch" | "attach"
+  name?: string
+}): SessionState {
   return {
-    id,
-    name,
-    mode,
-    adapter,
+    id: options.id,
+    name: options.name,
+    mode: options.mode,
+    adapter: options.adapter,
     breakpoints: new Map(),
     stoppedThreadId: null,
     stoppedReason: null,
   }
 }
 
-export function recordStop(state: SessionState, event: StoppedInfo): void {
-  state.stoppedThreadId = event.threadId ?? null
-  state.stoppedReason = event.reason
+export function recordStop(options: {
+  state: SessionState
+  event: StoppedInfo
+}): void {
+  options.state.stoppedThreadId = options.event.threadId ?? null
+  options.state.stoppedReason = options.event.reason
 }
 
 export function getAllBreakpoints(

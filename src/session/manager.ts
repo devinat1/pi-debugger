@@ -21,25 +21,34 @@ export class SessionManager {
     private adapterFactory: (type: AdapterType) => DebugAdapter = createAdapter,
   ) {}
 
-  async launch(
-    config: Omit<LaunchConfig, "type"> & { type?: AdapterType },
-    name?: string,
-  ): Promise<CreatedSession> {
-    const type = config.type ?? detectType(config.program)
-    return this.create("launch", this.adapterFactory(type), name, (adapter) =>
-      adapter.launch({ ...config, type }),
-    )
+  async launch(options: {
+    config: Omit<LaunchConfig, "type"> & { type?: AdapterType }
+    name?: string
+  }): Promise<CreatedSession> {
+    const adapterType = options.config.type ?? detectType(options.config.program)
+    return this.create({
+      mode: "launch",
+      adapter: this.adapterFactory(adapterType),
+      name: options.name,
+      start: (adapter) => adapter.launch({ ...options.config, type: adapterType }),
+    })
   }
 
-  async attach(config: AttachConfig, name?: string): Promise<CreatedSession> {
-    return this.create("attach", this.adapterFactory(config.type), name, (adapter) =>
-      adapter.attach(config),
-    )
+  async attach(options: {
+    config: AttachConfig
+    name?: string
+  }): Promise<CreatedSession> {
+    return this.create({
+      mode: "attach",
+      adapter: this.adapterFactory(options.config.type),
+      name: options.name,
+      start: (adapter) => adapter.attach(options.config),
+    })
   }
 
   require(sessionId: string): SessionState {
     const session = this.sessions.get(sessionId)
-    if (!session) throw new Error(`Debug session not found: ${sessionId}`)
+    if (!session) throw new Error(`Debug session not found: ${sessionId}.`)
     return session
   }
 
@@ -61,26 +70,30 @@ export class SessionManager {
     this.sessions.clear()
   }
 
-  private async create(
-    mode: "launch" | "attach",
-    adapter: DebugAdapter,
-    name: string | undefined,
-    start: (adapter: DebugAdapter) => Promise<void>,
-  ): Promise<CreatedSession> {
-    const session = createSessionState(
-      `debug-${++this.counter}`,
-      adapter,
-      mode,
-      name,
-    )
-    adapter.onStopped((event) => recordStop(session, event))
+  private async create(options: {
+    mode: "launch" | "attach"
+    adapter: DebugAdapter
+    name?: string
+    start: (adapter: DebugAdapter) => Promise<void>
+  }): Promise<CreatedSession> {
+    const session = createSessionState({
+      id: `debug-${++this.counter}`,
+      adapter: options.adapter,
+      mode: options.mode,
+      name: options.name,
+    })
+    options.adapter.onStopped((event) => recordStop({ state: session, event }))
     try {
-      await start(adapter)
-      const initialStop = await adapter.waitForInitialPause()
+      await options.start(options.adapter)
+      const initialStop = await options.adapter.waitForInitialPause()
       this.sessions.set(session.id, session)
       return { session, initialStop }
     } catch (error) {
-      await adapter.disconnect().catch(() => undefined)
+      try {
+        await options.adapter.disconnect()
+      } catch {
+        // Preserve the original startup error when cleanup also fails.
+      }
       throw error
     }
   }

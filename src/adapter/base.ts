@@ -60,26 +60,39 @@ export interface BreakpointResult {
   message?: string
 }
 
+export interface SetBreakpointsOptions {
+  file: string
+  breakpoints: SourceBreakpoint[]
+}
+
+export interface ThreadOptions {
+  threadId?: number
+}
+
+export interface GetVariablesOptions {
+  frameId?: number
+  scope?: string
+  maxDepth?: number
+}
+
+export interface EvaluateOptions {
+  expression: string
+  frameId?: number
+}
+
 export interface DebugAdapter {
   readonly id: AdapterType
   launch(config: LaunchConfig): Promise<void>
   attach(config: AttachConfig): Promise<void>
   waitForInitialPause(): Promise<StopResult>
-  setBreakpoints(
-    file: string,
-    breakpoints: SourceBreakpoint[],
-  ): Promise<BreakpointResult[]>
-  continue(threadId?: number): Promise<StopResult>
-  stepOver(threadId?: number): Promise<StopResult>
-  stepIn(threadId?: number): Promise<StopResult>
-  stepOut(threadId?: number): Promise<StopResult>
-  getCallStack(threadId?: number): Promise<StackFrame[]>
-  getVariables(
-    frameId?: number,
-    scope?: string,
-    maxDepth?: number,
-  ): Promise<Variable[]>
-  evaluate(expression: string, frameId?: number): Promise<EvalResult>
+  setBreakpoints(options: SetBreakpointsOptions): Promise<BreakpointResult[]>
+  continue(options?: ThreadOptions): Promise<StopResult>
+  stepOver(options?: ThreadOptions): Promise<StopResult>
+  stepIn(options?: ThreadOptions): Promise<StopResult>
+  stepOut(options?: ThreadOptions): Promise<StopResult>
+  getCallStack(options?: ThreadOptions): Promise<StackFrame[]>
+  getVariables(options?: GetVariablesOptions): Promise<Variable[]>
+  evaluate(options: EvaluateOptions): Promise<EvalResult>
   disconnect(): Promise<void>
   onStopped(callback: (event: StoppedInfo) => void): void
 }

@@ -5,20 +5,24 @@ import { requireDebugpy } from "../../src/adapter/python"
 
 describe("missing debugger prerequisites", () => {
   it("names node and its exact install command", () => {
-    expect(() => requireRuntime("node", () => null)).toThrow(
-      "node not found on PATH. Install with: brew install node",
+    expect(() =>
+      requireRuntime({ runtime: "node", resolver: () => null }),
+    ).toThrow(
+      "node not found on PATH. Install it with the following command.\nbrew install node",
     )
   })
 
   it("names debugpy and its exact install command", () => {
-    expect(() => requireDebugpy("python3", () => false)).toThrow(
-      "debugpy not found. Install with: python3 -m pip install debugpy",
+    expect(() =>
+      requireDebugpy({ pythonPath: "python3", check: () => false }),
+    ).toThrow(
+      "debugpy was not found. Install it with the following command.\npython3 -m pip install debugpy",
     )
   })
 
   it("names dlv and its exact install command", () => {
-    expect(() => requireDlv(undefined, () => null)).toThrow(
-      "dlv not found on PATH. Install with: go install github.com/go-delve/delve/cmd/dlv@latest",
+    expect(() => requireDlv({ resolver: () => null })).toThrow(
+      "dlv was not found on PATH. Install it with the following command.\ngo install github.com/go-delve/delve/cmd/dlv@latest",
     )
   })
 })

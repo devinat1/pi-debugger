@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
-import type { AdapterType, StopResult } from "./adapter/base"
+import type { StopResult } from "./adapter/base"
 import { sessions } from "./session/manager"
 import {
   getAllBreakpoints,
@@ -27,8 +27,12 @@ const breakpoint = Type.Object({
   logMessage: Type.Optional(Type.String()),
 })
 
-export function registerDebuggerTools(pi: ExtensionAPI): void {
-  pi.registerTool({
+const textContentType: "text" = "text"
+
+export function registerDebuggerTools(
+  extensionApi: Pick<ExtensionAPI, "registerTool">,
+): void {
+  extensionApi.registerTool({
     name: "debug_start_session",
     label: "Start Debug Session",
     description:
@@ -54,20 +58,22 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params) {
       return toolResult(async () => {
-        const created = await sessions.launch(
-          {
+        const created = await sessions.launch({
+          config: {
             ...params,
-            type: params.type as AdapterType | undefined,
             args: params.args,
           },
-          params.name,
-        )
-        return sessionResult(created.session, created.initialStop)
+          name: params.name,
+        })
+        return sessionResult({
+          session: created.session,
+          stop: created.initialStop,
+        })
       })
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_attach_session",
     label: "Attach Debug Session",
     description:
@@ -85,17 +91,22 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params) {
       return toolResult(async () => {
-        if (!params.port && !params.pid) throw new Error("Attach requires port or pid")
-        const created = await sessions.attach(
-          { ...params, type: params.type as AdapterType },
-          params.name,
-        )
-        return sessionResult(created.session, created.initialStop)
+        if (!params.port && !params.pid) {
+          throw new Error("Attach requires a port or PID.")
+        }
+        const created = await sessions.attach({
+          config: params,
+          name: params.name,
+        })
+        return sessionResult({
+          session: created.session,
+          stop: created.initialStop,
+        })
       })
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_stop_session",
     label: "Stop Debug Session",
     description: "Stop one debug session. Other sessions keep running.",
@@ -108,7 +119,7 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_set_breakpoints",
     label: "Set Breakpoints",
     description: "Add or replace breakpoints by line in one file for one session.",
@@ -121,14 +132,23 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
       return toolResult(async () => {
         const session = sessions.require(params.sessionId)
         const existing = session.breakpoints.get(params.file) ?? []
-        const merged = [...existing]
-        for (const item of params.breakpoints) {
-          const index = merged.findIndex((current) => current.line === item.line)
-          const next = { ...item, verified: false }
-          if (index >= 0) merged[index] = next
-          else merged.push(next)
-        }
-        const results = await session.adapter.setBreakpoints(params.file, merged)
+        const merged = params.breakpoints.reduce<BreakpointInfo[]>(
+          (currentBreakpoints, item) => {
+            const index = currentBreakpoints.findIndex(
+              (current) => current.line === item.line,
+            )
+            const next = { ...item, verified: false }
+            if (index < 0) return [...currentBreakpoints, next]
+            return currentBreakpoints.map((current, currentIndex) =>
+              currentIndex === index ? next : current,
+            )
+          },
+          existing,
+        )
+        const results = await session.adapter.setBreakpoints({
+          file: params.file,
+          breakpoints: merged,
+        })
         const updated = merged.map((item, index) => ({
           ...item,
           id: results[index]?.id,
@@ -142,7 +162,7 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_remove_breakpoints",
     label: "Remove Breakpoints",
     description: "Remove selected lines or every breakpoint in a file for one session.",
@@ -159,7 +179,10 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
               (item) => !params.lines?.includes(item.line),
             )
           : []
-        const results = await session.adapter.setBreakpoints(params.file, remaining)
+        const results = await session.adapter.setBreakpoints({
+          file: params.file,
+          breakpoints: remaining,
+        })
         const updated: BreakpointInfo[] = remaining.map((item, index) => ({
           ...item,
           id: results[index]?.id,
@@ -178,7 +201,7 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_list_breakpoints",
     label: "List Breakpoints",
     description: "List breakpoints for one debug session.",
@@ -191,20 +214,36 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
     },
   })
 
-  registerExecutionTool(pi, "debug_continue", "Continue", "Continue until the next stop", (session, id) =>
-    session.adapter.continue(id),
-  )
-  registerExecutionTool(pi, "debug_step_over", "Step Over", "Step over the current line", (session, id) =>
-    session.adapter.stepOver(id),
-  )
-  registerExecutionTool(pi, "debug_step_into", "Step Into", "Step into the current call", (session, id) =>
-    session.adapter.stepIn(id),
-  )
-  registerExecutionTool(pi, "debug_step_out", "Step Out", "Step out to the caller", (session, id) =>
-    session.adapter.stepOut(id),
-  )
+  registerExecutionTool({
+    extensionApi,
+    name: "debug_continue",
+    label: "Continue",
+    description: "Continue until the next stop",
+    execute: (session, threadId) => session.adapter.continue({ threadId }),
+  })
+  registerExecutionTool({
+    extensionApi,
+    name: "debug_step_over",
+    label: "Step Over",
+    description: "Step over the current line",
+    execute: (session, threadId) => session.adapter.stepOver({ threadId }),
+  })
+  registerExecutionTool({
+    extensionApi,
+    name: "debug_step_into",
+    label: "Step Into",
+    description: "Step into the current call",
+    execute: (session, threadId) => session.adapter.stepIn({ threadId }),
+  })
+  registerExecutionTool({
+    extensionApi,
+    name: "debug_step_out",
+    label: "Step Out",
+    description: "Step out to the caller",
+    execute: (session, threadId) => session.adapter.stepOut({ threadId }),
+  })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_get_variables",
     label: "Get Variables",
     description: "Inspect variables in a paused stack frame for one session.",
@@ -219,12 +258,16 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
         sessionId: params.sessionId,
         variables: await sessions
           .require(params.sessionId)
-          .adapter.getVariables(params.frameId, params.scope, params.maxDepth),
+          .adapter.getVariables({
+            frameId: params.frameId,
+            scope: params.scope,
+            maxDepth: params.maxDepth,
+          }),
       }))
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_get_call_stack",
     label: "Get Call Stack",
     description: "Get the paused call stack for one session.",
@@ -234,12 +277,12 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
         sessionId: params.sessionId,
         frames: await sessions
           .require(params.sessionId)
-          .adapter.getCallStack(params.threadId),
+          .adapter.getCallStack({ threadId: params.threadId }),
       }))
     },
   })
 
-  pi.registerTool({
+  extensionApi.registerTool({
     name: "debug_evaluate",
     label: "Evaluate Expression",
     description: "Evaluate an expression in a paused stack frame for one session.",
@@ -253,28 +296,36 @@ export function registerDebuggerTools(pi: ExtensionAPI): void {
         sessionId: params.sessionId,
         ...(await sessions
           .require(params.sessionId)
-          .adapter.evaluate(params.expression, params.frameId)),
+          .adapter.evaluate({
+            expression: params.expression,
+            frameId: params.frameId,
+          })),
       }))
     },
   })
 }
 
-function registerExecutionTool(
-  pi: ExtensionAPI,
-  name: "debug_continue" | "debug_step_over" | "debug_step_into" | "debug_step_out",
-  label: string,
-  description: string,
-  execute: (session: SessionState, threadId?: number) => Promise<StopResult>,
-): void {
-  pi.registerTool({
-    name,
-    label,
-    description,
+function registerExecutionTool(options: {
+  extensionApi: Pick<ExtensionAPI, "registerTool">
+  name: "debug_continue" | "debug_step_over" | "debug_step_into" | "debug_step_out"
+  label: string
+  description: string
+  execute: (session: SessionState, threadId?: number) => Promise<StopResult>
+}): void {
+  options.extensionApi.registerTool({
+    name: options.name,
+    label: options.label,
+    description: options.description,
     parameters: Type.Object({ sessionId, threadId }),
     async execute(_toolCallId, params) {
       return toolResult(async () => ({
         sessionId: params.sessionId,
-        ...formatStop(await execute(sessions.require(params.sessionId), params.threadId)),
+        ...formatStop(
+          await options.execute(
+            sessions.require(params.sessionId),
+            params.threadId,
+          ),
+        ),
       }))
     },
   })
@@ -284,26 +335,26 @@ async function toolResult(action: () => Promise<unknown>) {
   try {
     const value = await action()
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+      content: [{ type: textContentType, text: JSON.stringify(value, null, 2) }],
       details: value,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {
-      content: [{ type: "text" as const, text: message }],
+      content: [{ type: textContentType, text: message }],
       details: { error: message },
       isError: true,
     }
   }
 }
 
-function sessionResult(session: SessionState, stop: StopResult) {
+function sessionResult(options: { session: SessionState; stop: StopResult }) {
   return {
-    sessionId: session.id,
-    name: session.name,
-    adapterType: session.adapter.id,
-    mode: session.mode,
-    ...formatStop(stop),
+    sessionId: options.session.id,
+    name: options.session.name,
+    adapterType: options.session.adapter.id,
+    mode: options.session.mode,
+    ...formatStop(options.stop),
   }
 }
 
