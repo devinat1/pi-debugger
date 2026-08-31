@@ -115,48 +115,48 @@ export class BreakpointMirrorServer {
   private handleSetBreakpoints(request: Request): void {
     const source = recordValue(request.arguments?.source)
     const sourcePath = stringValue(source?.path)
-    const requestedBreakpoints = arrayValue(request.arguments?.breakpoints)
+    const resolvedSourcePath = sourcePath ? resolve(sourcePath) : undefined
+    const requestedLocations = arrayValue(request.arguments?.breakpoints)
       .map(recordValue)
       .filter((item) => item !== undefined)
-    const breakpoints = requestedBreakpoints.map((item) => {
-      const line = numberValue(item.line)
-      const column = numberValue(item.column)
-      const requested = sourcePath && line
-        ? { file: resolve(sourcePath), line, column }
-        : null
-      const mirrored = requested
+      .map((item) => {
+        const line = numberValue(item.line)
+        const column = numberValue(item.column)
+        const requested = resolvedSourcePath && line
+          ? { file: resolvedSourcePath, line, column }
+          : null
+        return {
+          line,
+          column,
+          key: requested ? breakpointKey(requested) : null,
+        }
+      })
+    const breakpoints = requestedLocations.map((location) => {
+      const mirrored = location.key
         ? this.currentProjection.find(
-            (breakpoint) => breakpointKey(breakpoint) === breakpointKey(requested),
+            (breakpoint) => breakpointKey(breakpoint) === location.key,
           )
         : undefined
       if (mirrored) return this.dapBreakpoint(mirrored)
       return {
         verified: false,
-        source: sourcePath ? { path: resolve(sourcePath) } : undefined,
-        line,
-        column,
+        source: resolvedSourcePath ? { path: resolvedSourcePath } : undefined,
+        line: location.line,
+        column: location.column,
         message: READ_ONLY_MESSAGE,
       }
     })
     this.sendResponse({ request, body: { breakpoints } })
-    if (!this.isConfigured || !sourcePath) return
+    if (!this.isConfigured || !resolvedSourcePath) return
     const requestedKeys = new Set(
-      requestedBreakpoints.flatMap((item) => {
-        const line = numberValue(item.line)
-        if (!line) return []
-        return [
-          breakpointKey({
-            file: resolve(sourcePath),
-            line,
-            column: numberValue(item.column),
-          }),
-        ]
-      }),
+      requestedLocations.flatMap((location) =>
+        location.key ? [location.key] : [],
+      ),
     )
     this.currentProjection
       .filter(
         (breakpoint) =>
-          breakpoint.file === resolve(sourcePath) &&
+          breakpoint.file === resolvedSourcePath &&
           !requestedKeys.has(breakpointKey(breakpoint)),
       )
       .forEach((breakpoint) =>

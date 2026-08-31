@@ -11,7 +11,7 @@ import { realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import type { MirroredBreakpoint } from "./projection"
-import { breakpointKey } from "./projection"
+import { mergeBreakpointProjection } from "./projection"
 
 const BREAKPOINT_STATE_VERSION = 1
 const DEFAULT_POLL_INTERVAL = 250
@@ -47,10 +47,7 @@ export class BreakpointStatePublisher {
     })
     this.producerId = options.producerId ?? randomUUID()
     this.producerPid = options.producerPid ?? process.pid
-    this.stateFile = join(
-      this.stateDirectory,
-      `${this.producerPid}-${this.producerId}.json`,
-    )
+    this.stateFile = join(this.stateDirectory, `${this.producerPid}.json`)
   }
 
   async publish(breakpoints: MirroredBreakpoint[]): Promise<void> {
@@ -72,7 +69,7 @@ export class BreakpointStatePublisher {
         // The original publish call reports the write failure.
       }
     }
-    await rm(this.stateFile, { force: true })
+    await this.removeOwnedStateFile()
   }
 
   private async writeAfter(options: {
@@ -86,7 +83,7 @@ export class BreakpointStatePublisher {
         // A later snapshot can recover from an earlier failed write.
       }
     }
-    await mkdir(this.stateDirectory, { recursive: true })
+    await mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
     const snapshot: BreakpointStateSnapshot = {
       version: BREAKPOINT_STATE_VERSION,
       workspace: this.workspace,
@@ -96,8 +93,21 @@ export class BreakpointStatePublisher {
       breakpoints: options.breakpoints,
     }
     const temporaryFile = `${this.stateFile}.${randomUUID()}.tmp`
-    await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, "utf8")
+    await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    })
     await rename(temporaryFile, this.stateFile)
+  }
+
+  private async removeOwnedStateFile(): Promise<void> {
+    try {
+      const value: unknown = JSON.parse(await readFile(this.stateFile, "utf8"))
+      if (!isRecord(value) || value.producerId !== this.producerId) return
+      await rm(this.stateFile, { force: true })
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") throw error
+    }
   }
 }
 
@@ -192,7 +202,7 @@ export async function readBreakpointProjection(options: {
       ? snapshot.breakpoints
       : [],
   )
-  return mergeBreakpoints(breakpoints)
+  return mergeBreakpointProjection(breakpoints)
 }
 
 export function breakpointStateDirectory(options: {
@@ -247,7 +257,7 @@ function parseSnapshot(options: {
   if (options.value.version !== BREAKPOINT_STATE_VERSION) return null
   if (options.value.workspace !== options.workspace) return null
   if (typeof options.value.producerId !== "string") return null
-  if (typeof options.value.producerPid !== "number") return null
+  if (!isPositiveSafeInteger(options.value.producerPid)) return null
   if (typeof options.value.updatedAt !== "string") return null
   if (!Array.isArray(options.value.breakpoints)) return null
   const breakpoints = options.value.breakpoints
@@ -266,8 +276,8 @@ function parseSnapshot(options: {
 function parseBreakpoint(value: unknown): MirroredBreakpoint | null {
   if (!isRecord(value)) return null
   if (typeof value.file !== "string") return null
-  if (typeof value.line !== "number" || value.line < 1) return null
-  if (value.column !== undefined && typeof value.column !== "number") return null
+  if (!isPositiveSafeInteger(value.line)) return null
+  if (value.column !== undefined && !isPositiveSafeInteger(value.column)) return null
   if (typeof value.verified !== "boolean") return null
   return {
     file: resolve(value.file),
@@ -277,32 +287,6 @@ function parseBreakpoint(value: unknown): MirroredBreakpoint | null {
   }
 }
 
-function mergeBreakpoints(
-  breakpoints: MirroredBreakpoint[],
-): MirroredBreakpoint[] {
-  const grouped = breakpoints.reduce<Map<string, MirroredBreakpoint[]>>(
-    (current, breakpoint) => {
-      const key = breakpointKey(breakpoint)
-      return new Map(current).set(key, [
-        ...(current.get(key) ?? []),
-        breakpoint,
-      ])
-    },
-    new Map(),
-  )
-  return Array.from(grouped.values())
-    .map((items) => ({
-      ...items[0],
-      verified: items.some((item) => item.verified),
-    }))
-    .sort(
-      (first, second) =>
-        first.file.localeCompare(second.file) ||
-        first.line - second.line ||
-        (first.column ?? 0) - (second.column ?? 0),
-    )
-}
-
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -310,6 +294,10 @@ function processIsAlive(pid: number): boolean {
   } catch (error) {
     return errorCode(error) === "EPERM"
   }
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && typeof value === "number" && value > 0
 }
 
 function errorCode(error: unknown): string | undefined {

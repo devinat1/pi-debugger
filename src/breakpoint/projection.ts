@@ -21,6 +21,12 @@ export function createBreakpointProjection(
       })),
     ),
   )
+  return mergeBreakpointProjection(breakpoints)
+}
+
+export function mergeBreakpointProjection(
+  breakpoints: MirroredBreakpoint[],
+): MirroredBreakpoint[] {
   const grouped = breakpoints.reduce<Map<string, MirroredBreakpoint[]>>(
     (current, breakpoint) => {
       const key = breakpointKey(breakpoint)

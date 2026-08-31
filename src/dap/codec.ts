@@ -14,27 +14,27 @@ export class DapMessageDecoder {
 
   push(data: Buffer): DapMessage[] {
     this.buffer = Buffer.concat([this.buffer, data])
-    return this.decodeAvailable([])
-  }
-
-  private decodeAvailable(messages: DapMessage[]): DapMessage[] {
-    const headerEnd = this.buffer.indexOf(HEADER_SEPARATOR)
-    if (headerEnd === -1) return messages
-    const contentLength = parseContentLength(
-      this.buffer.subarray(0, headerEnd).toString(),
-    )
-    if (contentLength === null) {
-      this.buffer = this.buffer.subarray(headerEnd + HEADER_SEPARATOR.length)
-      return this.decodeAvailable(messages)
+    const messages: DapMessage[] = []
+    while (this.buffer.length > 0) {
+      const headerEnd = this.buffer.indexOf(HEADER_SEPARATOR)
+      if (headerEnd === -1) break
+      const contentLength = parseContentLength(
+        this.buffer.subarray(0, headerEnd).toString(),
+      )
+      if (contentLength === null) {
+        this.buffer = this.buffer.subarray(headerEnd + HEADER_SEPARATOR.length)
+        continue
+      }
+      const contentStart = headerEnd + HEADER_SEPARATOR.length
+      if (this.buffer.length < contentStart + contentLength) break
+      const content = this.buffer
+        .subarray(contentStart, contentStart + contentLength)
+        .toString()
+      this.buffer = this.buffer.subarray(contentStart + contentLength)
+      const message = parseJsonMessage(content)
+      if (message) messages.push(message)
     }
-    const contentStart = headerEnd + HEADER_SEPARATOR.length
-    if (this.buffer.length < contentStart + contentLength) return messages
-    const content = this.buffer
-      .subarray(contentStart, contentStart + contentLength)
-      .toString()
-    this.buffer = this.buffer.subarray(contentStart + contentLength)
-    const message = parseJsonMessage(content)
-    return this.decodeAvailable(message ? [...messages, message] : messages)
+    return messages
   }
 }
 

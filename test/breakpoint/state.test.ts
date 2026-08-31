@@ -93,6 +93,43 @@ describe("breakpoint state", () => {
     ).toEqual([])
     await publisher.close()
   })
+
+  it("lets a replacement publisher own the process state file", async () => {
+    const temporaryDirectory = await createTemporaryDirectory()
+    const workspace = join(temporaryDirectory, "workspace")
+    const stateRoot = join(temporaryDirectory, "state")
+    await mkdir(workspace)
+    const first = new BreakpointStatePublisher({
+      workspace,
+      stateRoot,
+      producerId: "first",
+      producerPid: 404,
+    })
+    const replacement = new BreakpointStatePublisher({
+      workspace,
+      stateRoot,
+      producerId: "replacement",
+      producerPid: 404,
+    })
+    await first.publish([
+      { file: join(workspace, "old.ts"), line: 3, verified: true },
+    ])
+    await replacement.publish([
+      { file: join(workspace, "current.ts"), line: 8, verified: true },
+    ])
+
+    await first.close()
+    expect(
+      await readBreakpointProjection({
+        workspace,
+        stateRoot,
+        isProcessAlive: () => true,
+      }),
+    ).toEqual([
+      { file: join(workspace, "current.ts"), line: 8, verified: true },
+    ])
+    await replacement.close()
+  })
 })
 
 async function createTemporaryDirectory(): Promise<string> {
