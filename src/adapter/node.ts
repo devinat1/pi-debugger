@@ -55,6 +55,11 @@ interface BoundBreakpoint {
   message?: string
 }
 
+interface NodeAdapterTiming {
+  inspectorTimeout?: number
+  pauseTimeout?: number
+}
+
 /** Node/Bun/tsx/Deno debugger using their Chrome DevTools Protocol endpoint. */
 export class NodeAdapter implements DebugAdapter {
   readonly id: AdapterType = "node"
@@ -86,6 +91,8 @@ export class NodeAdapter implements DebugAdapter {
   private initialPausePromise: Promise<StopResult> | null = null
   private isPaused = false
 
+  constructor(private timing: NodeAdapterTiming = {}) {}
+
   async launch(config: LaunchConfig): Promise<void> {
     const runtime = config.runtimeExecutable ?? "node"
     requireRuntime({ runtime })
@@ -113,8 +120,8 @@ export class NodeAdapter implements DebugAdapter {
       ? new InspectorAnnouncementReader(this.process.stderr)
       : null
     try {
-      const launcherPause = this.waitForPause()
       await this.connectWebSocket(await this.waitForDebugger({ port }))
+      const launcherPause = this.waitForPause()
       await this.enableDebugger()
       if (!inspectorAnnouncements) {
         this.initialPausePromise = launcherPause
@@ -145,7 +152,6 @@ export class NodeAdapter implements DebugAdapter {
       }
       process.kill(config.pid, "SIGUSR1")
     }
-    this.initialPausePromise = this.waitForPause()
     await this.connectWebSocket(
       await this.waitForDebugger({
         port,
@@ -153,6 +159,7 @@ export class NodeAdapter implements DebugAdapter {
         timeout: ATTACH_INSPECTOR_TIMEOUT,
       }),
     )
+    this.initialPausePromise = this.waitForPause()
     await this.enableDebugger()
     // An --inspect-brk target reports its entry pause asynchronously after
     // runIfWaitingForDebugger. Give that event priority over a forced pause.
@@ -364,8 +371,8 @@ export class NodeAdapter implements DebugAdapter {
     this.configuredBreakpoints.clear()
     this.unresolvedBreakpointFiles.clear()
     this.isPaused = false
-    this.initialPausePromise = this.waitForPause()
     await this.connectWebSocket(url)
+    this.initialPausePromise = this.waitForPause()
     await this.enableDebugger()
     await new Promise((resolve) => setTimeout(resolve, ENTRY_PAUSE_DELAY))
     if (!this.isPaused) {
@@ -640,7 +647,9 @@ export class NodeAdapter implements DebugAdapter {
     timeout?: number
   }): Promise<string> {
     const host = options.host ?? "127.0.0.1"
-    const timeout = options.timeout ?? INSPECTOR_TIMEOUT
+    const timeout = options.timeout
+      ?? this.timing.inspectorTimeout
+      ?? INSPECTOR_TIMEOUT
     const started = Date.now()
     while (Date.now() - started < timeout) {
       try {
@@ -766,7 +775,7 @@ export class NodeAdapter implements DebugAdapter {
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error("Timed out waiting for debugger to pause."))
-      }, WAIT_TIMEOUT)
+      }, this.timing.pauseTimeout ?? WAIT_TIMEOUT)
       const cleanup = () => {
         clearTimeout(timer)
         this.stoppedCallbacks.delete(stopped)
@@ -774,6 +783,7 @@ export class NodeAdapter implements DebugAdapter {
       }
       const stopped = async (info: StoppedInfo) => {
         cleanup()
+        await Promise.all(this.sourceMapLoads.values())
         const frame = (await this.getCallStack())[0]
         resolve({
           reason: info.reason,

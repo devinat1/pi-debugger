@@ -9,6 +9,25 @@ const serverSource = resolve("test/fixtures/next/dist/bin/server.ts")
 const lazySource = resolve("test/fixtures/next/app/lazy.ts")
 
 describe("NodeAdapter", () => {
+  it("does not reject a pause waiter after launch already failed", async () => {
+    const adapter = new NodeAdapter({
+      inspectorTimeout: 20,
+      pauseTimeout: 50,
+    })
+    try {
+      await expect(
+        adapter.launch({
+          type: "node",
+          program: serverProgram,
+          runtimeExecutable: "/usr/bin/false",
+        }),
+      ).rejects.toThrow("Timed out waiting for Node inspector")
+      await Bun.sleep(75)
+    } finally {
+      await adapter.disconnect()
+    }
+  })
+
   it("hands a Next.js launch to its inspected server child", async () => {
     const adapter = new NodeAdapter()
     try {
