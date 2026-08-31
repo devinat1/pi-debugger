@@ -1,0 +1,60 @@
+{
+  "name": "@devinat1/pi-debugger",
+  "version": "0.1.0",
+  "description": "Native DAP debugger tools for the pi coding agent",
+  "type": "module",
+  "license": "MIT",
+  "author": "Devin Atienza",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devinat1/pi-debugger.git"
+  },
+  "homepage": "https://github.com/devinat1/pi-debugger#readme",
+  "bugs": "https://github.com/devinat1/pi-debugger/issues",
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "debugger",
+    "dap",
+    "debugpy",
+    "delve"
+  ],
+  "files": [
+    "extensions",
+    "src",
+    "samples/node/app.js",
+    "samples/python/app.py",
+    "samples/go/main.go",
+    "samples/go/go.mod",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi-debugger.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@types/bun": "^1.3.10",
+    "@types/node": "^22.19.11",
+    "typebox": "^1.0.65",
+    "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
