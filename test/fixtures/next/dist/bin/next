@@ -1,0 +1,14 @@
+const { spawn } = require("node:child_process")
+const { resolve } = require("node:path")
+
+const serverProgram = resolve(__dirname, "server.js")
+const server = spawn(
+  process.execPath,
+  ["--inspect-brk=127.0.0.1:0", serverProgram],
+  { stdio: ["ignore", "ignore", "inherit"] },
+)
+
+const stopServer = () => server.kill()
+process.on("SIGINT", stopServer)
+process.on("SIGTERM", stopServer)
+server.on("exit", (code) => process.exit(code ?? 0))

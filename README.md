@@ -78,6 +78,25 @@ debug_get_call_stack({ sessionId: "debug-1" })
 
 Set `runtimeExecutable` to `bun`, `tsx`, or `deno` and use `runtimeArgs` when that runtime needs a subcommand such as `deno run`.
 
+### Next.js
+
+Launch the app through its resolved Next.js executable and set the workspace as
+`cwd`:
+
+```text
+debug_start_session({
+  type: "node",
+  program: "/absolute/path/app/node_modules/next/dist/bin/next",
+  args: ["dev"],
+  cwd: "/absolute/path/app"
+})
+```
+
+pi-debugger automatically follows the request-serving Node child. Breakpoints
+set in TypeScript or TSX source files are mapped through Next.js source maps,
+including breakpoints set before a route chunk loads. No editor extension or
+manual inspector port is required.
+
 ### Node attach
 
 The usual Node attach target is an inspector port:
