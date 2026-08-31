@@ -4,9 +4,9 @@ import type {
   BreakpointProjectionSource,
 } from "../../src/breakpoint/state"
 import type { MirroredBreakpoint } from "../../src/breakpoint/projection"
-import { DapMessageDecoder, encodeDapMessage } from "../../src/dap/codec"
-import type { DapMessage, Request } from "../../src/dap/types"
+import type { DapMessage } from "../../src/dap/types"
 import { BreakpointMirrorServer } from "../../src/mirror/server"
+import { collectMessages, sendRequest } from "./support"
 
 describe("BreakpointMirrorServer", () => {
   it("mirrors pi breakpoints and rejects runtime control", async () => {
@@ -95,62 +95,6 @@ class FakeBreakpointSource implements BreakpointProjectionSource {
     this.breakpoints = breakpoints
     this.listener?.(breakpoints)
   }
-}
-
-function collectMessages(output: PassThrough) {
-  const decoder = new DapMessageDecoder()
-  const pending: DapMessage[] = []
-  output.on("data", (data: Buffer) => pending.push(...decoder.push(data)))
-
-  const next = async (
-    predicate: (message: DapMessage) => boolean,
-  ): Promise<DapMessage> => {
-    const deadline = Date.now() + 1_000
-    while (Date.now() < deadline) {
-      const index = pending.findIndex(predicate)
-      if (index >= 0) {
-        const [message] = pending.splice(index, 1)
-        if (message) return message
-      }
-      await Bun.sleep(5)
-    }
-    throw new Error("Timed out waiting for DAP message.")
-  }
-
-  return {
-    async nextResponse(requestSequence: number) {
-      const message = await next(
-        (item) =>
-          item.type === "response" && item.request_seq === requestSequence,
-      )
-      if (message.type !== "response") throw new Error("Expected a DAP response.")
-      return message
-    },
-    async nextEvent(event: string) {
-      const message = await next(
-        (item) => item.type === "event" && item.event === event,
-      )
-      if (message.type !== "event") throw new Error("Expected a DAP event.")
-      return message
-    },
-  }
-}
-
-function sendRequest(
-  input: PassThrough,
-  options: {
-    seq: number
-    command: string
-    arguments?: Record<string, unknown>
-  },
-): void {
-  const request: Request = {
-    seq: options.seq,
-    type: "request",
-    command: options.command,
-    arguments: options.arguments,
-  }
-  input.write(encodeDapMessage(request))
 }
 
 function breakpointLine(message: DapMessage): number | undefined {

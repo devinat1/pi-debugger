@@ -210,27 +210,45 @@ debug_get_variables({ sessionId: "debug-2" })
 
 ## Editor breakpoint mirror
 
-pi-debugger includes a read-only DAP adapter that shows pi-created source
-breakpoints as native breakpoint markers in a DAP-capable editor. It does not
-connect to Node, debugpy, or Delve, so the editor never competes with pi for
-pause, continue, or stepping control.
-
-Register this command as a custom debug adapter in the editor:
+pi-debugger can show pi-created source breakpoints as native markers in Zed or
+VS Code without installing an editor extension. Run one setup command from the
+workspace root:
 
 ```sh
-pi-debugger-breakpoint-mirror --workspace /absolute/path/to/workspace
+pi-debugger-breakpoint-mirror setup --editor zed
+# or
+pi-debugger-breakpoint-mirror setup --editor vscode
 ```
 
-Then start one mirror debug session. The adapter displays the deduplicated union
-of breakpoint locations from every live pi session in that workspace. Adding,
-removing, disabling, or changing a mirrored breakpoint in the editor does not
-change pi or the runtime; pi restores its authoritative markers while the mirror
-session remains open.
+`--editor` is required. Use `--workspace /absolute/path` when running the
+command outside the target workspace.
 
-DAP standardizes adapter messages but not adapter installation or registration,
-so the registration steps depend on the editor. The package provides the generic
-stdio adapter executable and does not install a VS Code, Zed, or other
-editor-specific extension.
+Then:
+
+1. Start pi in the same workspace and create breakpoints through pi.
+2. Open the editor's debugger and start **Pi breakpoint mirror**.
+3. Leave that debug session open while pi adds, removes, or verifies breakpoints.
+
+For a package checkout, build and run the local executable instead:
+
+```sh
+bun run build:mirror
+./dist/pi-debugger-breakpoint-mirror.js setup --editor zed
+```
+
+Setup creates or updates one named entry in `.zed/debug.json`, or one named entry
+each in `.vscode/launch.json` and `.vscode/tasks.json`. Other entries and JSONC
+comments are preserved. The generated profile contains absolute workspace and
+executable paths, so rerun setup after moving the package or copying the project
+to another machine.
+
+The profile starts a one-client DAP server on `127.0.0.1` and uses the editor's
+built-in JavaScript debugger identity to connect to it. The server exits after
+the editor disconnects or after 30 seconds without a connection. It never
+connects to Node, debugpy, or Delve, so it cannot compete with pi for pause,
+continue, or stepping control. The displayed markers are the deduplicated union
+from every live pi session in the workspace. Editor changes remain read-only;
+pi stays authoritative.
 
 ## Maintainer checks
 
