@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["server.ts"],
+  "sourcesContent": ["const childTarget = \"request-server\"\nReflect.set(globalThis, \"childTarget\", childTarget)\nsetTimeout(() => {}, 50)\nsetInterval(() => {}, 1_000)\n"],
+  "names": [],
+  "mappings": "AAAA;AACA;AACA;AACA"
+}

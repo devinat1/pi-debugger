@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../../app/lazy.ts"],
+  "sourcesContent": ["const lazyTarget = \"lazy-request\"\nReflect.set(globalThis, \"lazyTarget\", lazyTarget)\nexport {}\n"],
+  "names": [],
+  "mappings": "AAAA;AACA"
+}
