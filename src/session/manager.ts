@@ -3,10 +3,20 @@ import type {
   AttachConfig,
   DebugAdapter,
   LaunchConfig,
+  SetBreakpointsOptions,
   StopResult,
 } from "../adapter/base"
+import {
+  createBreakpointProjection,
+  type MirroredBreakpoint,
+} from "../breakpoint/projection"
 import { createAdapter, detectType } from "../adapter/registry"
-import { createSessionState, recordStop, type SessionState } from "./state"
+import {
+  createSessionState,
+  recordStop,
+  type BreakpointInfo,
+  type SessionState,
+} from "./state"
 
 export interface CreatedSession {
   session: SessionState
@@ -15,6 +25,9 @@ export interface CreatedSession {
 
 export class SessionManager {
   private sessions = new Map<string, SessionState>()
+  private breakpointListeners = new Set<
+    (breakpoints: MirroredBreakpoint[]) => Promise<void>
+  >()
   private counter = 0
 
   constructor(
@@ -56,10 +69,81 @@ export class SessionManager {
     return [...this.sessions.values()]
   }
 
+  onBreakpointsChanged(
+    listener: (breakpoints: MirroredBreakpoint[]) => Promise<void>,
+  ): () => void {
+    this.breakpointListeners.add(listener)
+    return () => this.breakpointListeners.delete(listener)
+  }
+
+  async setBreakpoints(options: {
+    sessionId: string
+    file: string
+    breakpoints: SetBreakpointsOptions["breakpoints"]
+  }): Promise<BreakpointInfo[]> {
+    const session = this.require(options.sessionId)
+    const existing = session.breakpoints.get(options.file) ?? []
+    const merged = options.breakpoints.reduce<BreakpointInfo[]>(
+      (currentBreakpoints, item) => {
+        const index = currentBreakpoints.findIndex(
+          (current) => current.line === item.line,
+        )
+        const next = { ...item, verified: false }
+        if (index < 0) return [...currentBreakpoints, next]
+        return currentBreakpoints.map((current, currentIndex) =>
+          currentIndex === index ? next : current,
+        )
+      },
+      existing,
+    )
+    const results = await session.adapter.setBreakpoints({
+      file: options.file,
+      breakpoints: merged,
+    })
+    const updated = merged.map((item, index) => ({
+      ...item,
+      id: results[index]?.id,
+      verified: results[index]?.verified ?? false,
+      line: results[index]?.line ?? item.line,
+      message: results[index]?.message,
+    }))
+    session.breakpoints.set(options.file, updated)
+    await this.publishBreakpointChanges()
+    return updated
+  }
+
+  async removeBreakpoints(options: {
+    sessionId: string
+    file: string
+    lines?: number[]
+  }): Promise<BreakpointInfo[]> {
+    const session = this.require(options.sessionId)
+    const remaining = options.lines
+      ? (session.breakpoints.get(options.file) ?? []).filter(
+          (item) => !options.lines?.includes(item.line),
+        )
+      : []
+    const results = await session.adapter.setBreakpoints({
+      file: options.file,
+      breakpoints: remaining,
+    })
+    const updated = remaining.map((item, index) => ({
+      ...item,
+      id: results[index]?.id,
+      verified: results[index]?.verified ?? false,
+      message: results[index]?.message,
+    }))
+    if (updated.length > 0) session.breakpoints.set(options.file, updated)
+    else session.breakpoints.delete(options.file)
+    await this.publishBreakpointChanges()
+    return updated
+  }
+
   async stop(sessionId: string): Promise<SessionState> {
     const session = this.require(sessionId)
     await session.adapter.disconnect()
     this.sessions.delete(sessionId)
+    await this.publishBreakpointChanges()
     return session
   }
 
@@ -68,6 +152,7 @@ export class SessionManager {
       [...this.sessions.values()].map((session) => session.adapter.disconnect()),
     )
     this.sessions.clear()
+    await this.publishBreakpointChanges()
   }
 
   private async create(options: {
@@ -96,6 +181,15 @@ export class SessionManager {
       }
       throw error
     }
+  }
+
+  private async publishBreakpointChanges(): Promise<void> {
+    const projection = createBreakpointProjection(this.list())
+    await Promise.allSettled(
+      Array.from(this.breakpointListeners).map((listener) =>
+        listener(projection),
+      ),
+    )
   }
 }
 

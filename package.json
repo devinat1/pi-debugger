@@ -20,6 +20,7 @@
     "delve"
   ],
   "files": [
+    "dist",
     "extensions",
     "src",
     "samples/node/app.js",
@@ -32,8 +33,13 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test",
+    "build:mirror": "bun build src/mirror/cli.ts --target=node --outfile=dist/pi-debugger-breakpoint-mirror.js",
+    "check": "bun run typecheck && bun run build:mirror && bun test",
+    "prepare": "bun run build:mirror",
     "pack:check": "npm pack --dry-run"
+  },
+  "bin": {
+    "pi-debugger-breakpoint-mirror": "./dist/pi-debugger-breakpoint-mirror.js"
   },
   "pi": {
     "extensions": [

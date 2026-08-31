@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { resolve } from "node:path"
 import type {
   AdapterType,
   AttachConfig,
@@ -16,6 +17,7 @@ import { SessionManager } from "../../src/session/manager"
 
 class FakeAdapter implements DebugAdapter {
   isDisconnected = false
+  readonly breakpointRequests: SetBreakpointsOptions[] = []
   readonly callbacks = new Set<(event: StoppedInfo) => void>()
 
   constructor(readonly id: AdapterType) {}
@@ -28,6 +30,7 @@ class FakeAdapter implements DebugAdapter {
   async setBreakpoints(
     options: SetBreakpointsOptions,
   ): Promise<BreakpointResult[]> {
+    this.breakpointRequests.push(options)
     return options.breakpoints.map((item) => ({ verified: true, line: item.line }))
   }
   async continue(): Promise<StopResult> {
@@ -88,5 +91,45 @@ describe("SessionManager", () => {
     expect(nodeAdapter.isDisconnected).toBe(true)
     expect(goAdapter.isDisconnected).toBe(false)
     expect(manager.require(second.session.id).name).toBe("two")
+  })
+
+  it("publishes the live breakpoint union after mutations and stop", async () => {
+    const adapter = new FakeAdapter("node")
+    const manager = new SessionManager(() => adapter)
+    const projections: unknown[] = []
+    manager.onBreakpointsChanged(async (breakpoints) => {
+      projections.push(breakpoints)
+    })
+    const created = await manager.launch({
+      config: { type: "node", program: "one.js" },
+    })
+    const file = resolve("one.js")
+
+    expect(
+      await manager.setBreakpoints({
+        sessionId: created.session.id,
+        file,
+        breakpoints: [{ line: 3 }],
+      }),
+    ).toEqual([{ line: 3, verified: true }])
+    expect(projections.at(-1)).toEqual([
+      { file, line: 3, verified: true },
+    ])
+
+    await manager.removeBreakpoints({
+      sessionId: created.session.id,
+      file,
+      lines: [3],
+    })
+    expect(projections.at(-1)).toEqual([])
+    expect(adapter.breakpointRequests.at(-1)?.breakpoints).toEqual([])
+
+    await manager.setBreakpoints({
+      sessionId: created.session.id,
+      file,
+      breakpoints: [{ line: 4 }],
+    })
+    await manager.stop(created.session.id)
+    expect(projections.at(-1)).toEqual([])
   })
 })

@@ -1,6 +1,6 @@
 import { Socket } from "node:net"
-import { booleanValue, numberValue, recordValue, stringValue } from "../util/value"
-import type { DapMessage, Event, Request, Response } from "./types"
+import { DapMessageDecoder, encodeDapMessage } from "./codec"
+import type { DapMessage, Request, Response } from "./types"
 
 type EventHandler = (body: Record<string, unknown>) => void
 
@@ -19,7 +19,7 @@ export class DapClient {
     }
   >()
   private eventHandlers = new Map<string, Set<EventHandler>>()
-  private buffer = Buffer.alloc(0)
+  private decoder = new DapMessageDecoder()
   private isConnected = false
 
   constructor(private connection: { host: string; port: number }) {}
@@ -59,8 +59,6 @@ export class DapClient {
       command: options.command,
       arguments: options.arguments,
     }
-    const json = JSON.stringify(request)
-    const header = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n`
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(sequence)
@@ -69,7 +67,7 @@ export class DapClient {
         )
       }, REQUEST_TIMEOUT)
       this.pending.set(sequence, { resolve, reject, timer })
-      this.socket.write(header + json)
+      this.socket.write(encodeDapMessage(request))
     })
   }
 
@@ -99,32 +97,7 @@ export class DapClient {
   }
 
   private onData(data: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, data])
-    while (true) {
-      const headerEnd = this.buffer.indexOf("\r\n\r\n")
-      if (headerEnd === -1) return
-      const match = this.buffer
-        .subarray(0, headerEnd)
-        .toString()
-        .match(/Content-Length:\s*(\d+)/i)
-      if (!match) {
-        this.buffer = this.buffer.subarray(headerEnd + 4)
-        continue
-      }
-      const contentLength = Number.parseInt(match[1], 10)
-      const contentStart = headerEnd + 4
-      if (this.buffer.length < contentStart + contentLength) return
-      const content = this.buffer
-        .subarray(contentStart, contentStart + contentLength)
-        .toString()
-      this.buffer = this.buffer.subarray(contentStart + contentLength)
-      try {
-        const message = parseDapMessage(JSON.parse(content))
-        if (message) this.handleMessage(message)
-      } catch {
-        // Ignore malformed adapter output and keep reading framed messages.
-      }
-    }
+    this.decoder.push(data).forEach((message) => this.handleMessage(message))
   }
 
   private handleMessage(message: DapMessage): void {
@@ -155,43 +128,5 @@ export class DapClient {
       pending.reject(error)
     })
     this.pending.clear()
-  }
-}
-
-function parseDapMessage(value: unknown): DapMessage | undefined {
-  const message = recordValue(value)
-  const sequence = numberValue(message?.seq)
-  const type = stringValue(message?.type)
-  if (sequence === undefined) return undefined
-  if (type === "event") {
-    const event = stringValue(message?.event)
-    if (!event) return undefined
-    return { seq: sequence, type, event, body: recordValue(message?.body) }
-  }
-  if (type === "response") {
-    const requestSequence = numberValue(message?.request_seq)
-    const isSuccessful = booleanValue(message?.success)
-    const command = stringValue(message?.command)
-    if (requestSequence === undefined || isSuccessful === undefined || !command) {
-      return undefined
-    }
-    return {
-      seq: sequence,
-      type,
-      request_seq: requestSequence,
-      success: isSuccessful,
-      command,
-      message: stringValue(message?.message),
-      body: recordValue(message?.body),
-    }
-  }
-  if (type !== "request") return undefined
-  const command = stringValue(message?.command)
-  if (!command) return undefined
-  return {
-    seq: sequence,
-    type,
-    command,
-    arguments: recordValue(message?.arguments),
   }
 }
