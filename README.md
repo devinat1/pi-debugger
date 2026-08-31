@@ -1,6 +1,6 @@
 # pi-debugger
 
-Native debugger tools for the [pi coding agent](https://github.com/earendil-works/pi). It uses CDP/DAP directly—no MCP server, VS Code extension, or humancode checkout.
+Native debugger tools for the [pi coding agent](https://github.com/earendil-works/pi). It uses CDP/DAP directly—no MCP server, editor-specific extension, or humancode checkout.
 
 Supported runtimes:
 
@@ -208,6 +208,30 @@ debug_get_call_stack({ sessionId: "debug-1" })
 debug_get_variables({ sessionId: "debug-2" })
 ```
 
+## Editor breakpoint mirror
+
+pi-debugger includes a read-only DAP adapter that shows pi-created source
+breakpoints as native breakpoint markers in a DAP-capable editor. It does not
+connect to Node, debugpy, or Delve, so the editor never competes with pi for
+pause, continue, or stepping control.
+
+Register this command as a custom debug adapter in the editor:
+
+```sh
+pi-debugger-breakpoint-mirror --workspace /absolute/path/to/workspace
+```
+
+Then start one mirror debug session. The adapter displays the deduplicated union
+of breakpoint locations from every live pi session in that workspace. Adding,
+removing, disabling, or changing a mirrored breakpoint in the editor does not
+change pi or the runtime; pi restores its authoritative markers while the mirror
+session remains open.
+
+DAP standardizes adapter messages but not adapter installation or registration,
+so the registration steps depend on the editor. The package provides the generic
+stdio adapter executable and does not install a VS Code, Zed, or other
+editor-specific extension.
+
 ## Maintainer checks
 
 ```sh
@@ -228,7 +252,7 @@ The manual smoke tests exercise breakpoint, continue, variables, and stack inspe
 
 ## Security
 
-Debugger protocols can execute code in the target process. Bind inspector, debugpy, and Delve ports to `127.0.0.1`; use an authenticated tunnel for remote targets.
+Debugger protocols can execute code in the target process. Bind inspector, debugpy, and Delve ports to `127.0.0.1`; use an authenticated tunnel for remote targets. The breakpoint mirror writes only absolute source paths and breakpoint locations to per-process files under the operating system's temporary directory, and removes its file during a clean pi shutdown.
 
 ## License
 

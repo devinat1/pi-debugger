@@ -4,7 +4,6 @@ import type { StopResult } from "./adapter/base"
 import { sessions } from "./session/manager"
 import {
   getAllBreakpoints,
-  type BreakpointInfo,
   type SessionState,
 } from "./session/state"
 
@@ -130,34 +129,16 @@ export function registerDebuggerTools(
     }),
     async execute(_toolCallId, params) {
       return toolResult(async () => {
-        const session = sessions.require(params.sessionId)
-        const existing = session.breakpoints.get(params.file) ?? []
-        const merged = params.breakpoints.reduce<BreakpointInfo[]>(
-          (currentBreakpoints, item) => {
-            const index = currentBreakpoints.findIndex(
-              (current) => current.line === item.line,
-            )
-            const next = { ...item, verified: false }
-            if (index < 0) return [...currentBreakpoints, next]
-            return currentBreakpoints.map((current, currentIndex) =>
-              currentIndex === index ? next : current,
-            )
-          },
-          existing,
-        )
-        const results = await session.adapter.setBreakpoints({
+        const updated = await sessions.setBreakpoints({
+          sessionId: params.sessionId,
           file: params.file,
-          breakpoints: merged,
+          breakpoints: params.breakpoints,
         })
-        const updated = merged.map((item, index) => ({
-          ...item,
-          id: results[index]?.id,
-          verified: results[index]?.verified ?? false,
-          line: results[index]?.line ?? item.line,
-          message: results[index]?.message,
-        }))
-        session.breakpoints.set(params.file, updated)
-        return { sessionId: session.id, file: params.file, breakpoints: updated }
+        return {
+          sessionId: params.sessionId,
+          file: params.file,
+          breakpoints: updated,
+        }
       })
     },
   })
@@ -173,26 +154,13 @@ export function registerDebuggerTools(
     }),
     async execute(_toolCallId, params) {
       return toolResult(async () => {
-        const session = sessions.require(params.sessionId)
-        const remaining = params.lines
-          ? (session.breakpoints.get(params.file) ?? []).filter(
-              (item) => !params.lines?.includes(item.line),
-            )
-          : []
-        const results = await session.adapter.setBreakpoints({
+        const updated = await sessions.removeBreakpoints({
+          sessionId: params.sessionId,
           file: params.file,
-          breakpoints: remaining,
+          lines: params.lines,
         })
-        const updated: BreakpointInfo[] = remaining.map((item, index) => ({
-          ...item,
-          id: results[index]?.id,
-          verified: results[index]?.verified ?? false,
-          message: results[index]?.message,
-        }))
-        if (updated.length > 0) session.breakpoints.set(params.file, updated)
-        else session.breakpoints.delete(params.file)
         return {
-          sessionId: session.id,
+          sessionId: params.sessionId,
           file: params.file,
           removed: params.lines ?? "all",
           remaining: updated.length,
