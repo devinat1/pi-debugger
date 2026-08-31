@@ -3,7 +3,7 @@
 ## Scope
 
 - This is a standalone TypeScript pi package. Frontend, JSX, Tailwind, meeting ownership, Prisma, email-type placement, and component-fetch rules do not apply unless those domains are added later.
-- Keep runtime control tools-only. A read-only DAP breakpoint mirror may expose source locations to editors; keep editor-specific bridges, shared execution control, MCP servers, phase machines, teaching modes, and custom TUIs out of the package.
+- Keep runtime control tools-only. A read-only DAP breakpoint mirror may expose source locations and generate project connection profiles for supported editors. Keep editor extensions, editor-specific runtime bridges, shared execution control, MCP servers, phase machines, teaching modes, and custom TUIs out of the package.
 - Preserve independent named debugger sessions. Creating or attaching a session must not stop another session, and every later debugger operation must require `sessionId`.
 - Do not modify the humancode repository. Reuse its debugger behavior here without adding a runtime dependency on a humancode checkout.
 
