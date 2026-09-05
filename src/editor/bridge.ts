@@ -1,9 +1,10 @@
 import { createServer, type Server, type Socket } from "node:net"
 import type { SessionManager } from "../session/manager"
-import { readEditorPort } from "./config"
+import { readEditorConfiguration } from "./config"
 import { SharedDebugServer } from "./server"
 
 const LOOPBACK_HOST = "127.0.0.1"
+const AUTHENTICATION_TIMEOUT = 2_000
 
 export class EditorDebugBridge {
   private activeDebugServer: SharedDebugServer | null = null
@@ -14,6 +15,7 @@ export class EditorDebugBridge {
     private options: {
       port: number
       sessions: SessionManager
+      token: string
     },
   ) {}
 
@@ -43,10 +45,17 @@ export class EditorDebugBridge {
       return
     }
     this.activeSocket = socket
+    const authenticationTimer = setTimeout(
+      () => socket.destroy(),
+      AUTHENTICATION_TIMEOUT,
+    )
+    socket.once("close", () => clearTimeout(authenticationTimer))
     const debugServer = new SharedDebugServer({
       input: socket,
       output: socket,
       sessions: this.options.sessions,
+      token: this.options.token,
+      onAuthenticated: () => clearTimeout(authenticationTimer),
     })
     this.activeDebugServer = debugServer
     void this.runClient({ debugServer, socket })
@@ -72,9 +81,13 @@ export async function startConfiguredEditorBridge(options: {
   workspace: string
   sessions: SessionManager
 }): Promise<EditorDebugBridge | null> {
-  const port = await readEditorPort(options.workspace)
-  if (port === null) return null
-  const bridge = new EditorDebugBridge({ port, sessions: options.sessions })
+  const configuration = await readEditorConfiguration(options.workspace)
+  if (configuration === null) return null
+  const bridge = new EditorDebugBridge({
+    port: configuration.port,
+    sessions: options.sessions,
+    token: configuration.token,
+  })
   await bridge.start()
   return bridge
 }

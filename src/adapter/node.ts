@@ -61,6 +61,11 @@ interface NodeAdapterTiming {
   pauseTimeout?: number
 }
 
+interface PauseWaiter {
+  cancel: () => void
+  result: Promise<StopResult>
+}
+
 /** Node/Bun/tsx/Deno debugger using their Chrome DevTools Protocol endpoint. */
 export class NodeAdapter implements DebugAdapter {
   readonly id: AdapterType = "node"
@@ -123,14 +128,15 @@ export class NodeAdapter implements DebugAdapter {
       : null
     try {
       await this.connectWebSocket(await this.waitForDebugger({ port }))
-      const launcherPause = this.waitForPause()
-      await this.enableDebugger()
+      const launcherPause = await this.startWithPauseWaiter(
+        () => this.enableDebugger(),
+      )
       if (!inspectorAnnouncements) {
-        this.initialPausePromise = launcherPause
+        this.initialPausePromise = launcherPause.result
         return
       }
 
-      await launcherPause
+      await launcherPause.result
       const childInspectorUrl = inspectorAnnouncements.waitForChild({
         parentPort: port,
       })
@@ -161,14 +167,16 @@ export class NodeAdapter implements DebugAdapter {
         timeout: ATTACH_INSPECTOR_TIMEOUT,
       }),
     )
-    this.initialPausePromise = this.waitForPause()
-    await this.enableDebugger()
-    // An --inspect-brk target reports its entry pause asynchronously after
-    // runIfWaitingForDebugger. Give that event priority over a forced pause.
-    await new Promise((resolve) => setTimeout(resolve, ENTRY_PAUSE_DELAY))
-    if (!this.isPaused) {
-      await this.cdpSend({ method: "Debugger.pause", parameters: {} })
-    }
+    const initialPause = await this.startWithPauseWaiter(async () => {
+      await this.enableDebugger()
+      // An --inspect-brk target reports its entry pause asynchronously after
+      // runIfWaitingForDebugger. Give that event priority over a forced pause.
+      await new Promise((resolve) => setTimeout(resolve, ENTRY_PAUSE_DELAY))
+      if (!this.isPaused) {
+        await this.cdpSend({ method: "Debugger.pause", parameters: {} })
+      }
+    })
+    this.initialPausePromise = initialPause.result
   }
 
   async waitForInitialPause(): Promise<StopResult> {
@@ -412,12 +420,14 @@ export class NodeAdapter implements DebugAdapter {
     this.unresolvedBreakpointFiles.clear()
     this.isPaused = false
     await this.connectWebSocket(url)
-    this.initialPausePromise = this.waitForPause()
-    await this.enableDebugger()
-    await new Promise((resolve) => setTimeout(resolve, ENTRY_PAUSE_DELAY))
-    if (!this.isPaused) {
-      await this.cdpSend({ method: "Debugger.pause", parameters: {} })
-    }
+    const initialPause = await this.startWithPauseWaiter(async () => {
+      await this.enableDebugger()
+      await new Promise((resolve) => setTimeout(resolve, ENTRY_PAUSE_DELAY))
+      if (!this.isPaused) {
+        await this.cdpSend({ method: "Debugger.pause", parameters: {} })
+      }
+    })
+    this.initialPausePromise = initialPause.result
   }
 
   private async setDirectBreakpoint(options: {
@@ -675,9 +685,10 @@ export class NodeAdapter implements DebugAdapter {
   }
 
   private async resume(command: ExecutionCommand): Promise<StopResult> {
-    const pause = this.waitForPause()
-    await this.startExecution({ command })
-    return pause
+    const pause = await this.startWithPauseWaiter(
+      () => this.startExecution({ command }),
+    )
+    return pause.result
   }
 
   private async waitForDebugger(options: {
@@ -823,8 +834,9 @@ export class NodeAdapter implements DebugAdapter {
     this.stoppedCallbacks.forEach((callback) => callback(event))
   }
 
-  private waitForPause(): Promise<StopResult> {
-    return new Promise((resolve, reject) => {
+  private createPauseWaiter(): PauseWaiter {
+    const cancellation = new AbortController()
+    const result = new Promise<StopResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error("Timed out waiting for debugger to pause."))
@@ -857,7 +869,25 @@ export class NodeAdapter implements DebugAdapter {
       }
       this.stoppedCallbacks.add(stopped)
       this.terminatedCallbacks.add(terminated)
+      cancellation.signal.addEventListener("abort", cleanup, { once: true })
     })
+    return {
+      cancel: () => cancellation.abort(),
+      result,
+    }
+  }
+
+  private async startWithPauseWaiter(
+    start: () => Promise<void>,
+  ): Promise<PauseWaiter> {
+    const pause = this.createPauseWaiter()
+    try {
+      await start()
+      return pause
+    } catch (error) {
+      pause.cancel()
+      throw error
+    }
   }
 
   private async getProperties(options: {

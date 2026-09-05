@@ -98,7 +98,7 @@ describe("SessionManager", () => {
     const adapter = new FakeAdapter("node")
     const manager = new SessionManager(() => adapter)
     const projections: unknown[] = []
-    manager.onBreakpointsChanged(async (breakpoints) => {
+    manager.onBreakpointsChanged((breakpoints) => {
       projections.push(breakpoints)
     })
     const created = await manager.launch({

@@ -28,7 +28,7 @@ export interface CreatedSession {
 export class SessionManager {
   private sessions = new Map<string, SessionState>()
   private breakpointListeners = new Set<
-    (breakpoints: MirroredBreakpoint[]) => Promise<void>
+    (breakpoints: MirroredBreakpoint[]) => void
   >()
   private counter = 0
 
@@ -72,7 +72,7 @@ export class SessionManager {
   }
 
   onBreakpointsChanged(
-    listener: (breakpoints: MirroredBreakpoint[]) => Promise<void>,
+    listener: (breakpoints: MirroredBreakpoint[]) => void,
   ): () => void {
     this.breakpointListeners.add(listener)
     return () => this.breakpointListeners.delete(listener)
@@ -110,7 +110,7 @@ export class SessionManager {
       message: results[index]?.message,
     }))
     session.breakpoints.set(options.file, updated)
-    await this.publishBreakpointChanges()
+    this.publishBreakpointChanges()
     return updated
   }
 
@@ -133,7 +133,7 @@ export class SessionManager {
     }))
     if (updated.length > 0) session.breakpoints.set(options.file, updated)
     else session.breakpoints.delete(options.file)
-    await this.publishBreakpointChanges()
+    this.publishBreakpointChanges()
     return updated
   }
 
@@ -160,7 +160,7 @@ export class SessionManager {
     }))
     if (updated.length > 0) session.breakpoints.set(options.file, updated)
     else session.breakpoints.delete(options.file)
-    await this.publishBreakpointChanges()
+    this.publishBreakpointChanges()
     return updated
   }
 
@@ -168,7 +168,7 @@ export class SessionManager {
     const session = this.require(sessionId)
     await session.adapter.disconnect()
     this.sessions.delete(sessionId)
-    await this.publishBreakpointChanges()
+    this.publishBreakpointChanges()
     return session
   }
 
@@ -177,7 +177,7 @@ export class SessionManager {
       [...this.sessions.values()].map((session) => session.adapter.disconnect()),
     )
     this.sessions.clear()
-    await this.publishBreakpointChanges()
+    this.publishBreakpointChanges()
   }
 
   private async create(options: {
@@ -210,13 +210,15 @@ export class SessionManager {
     }
   }
 
-  private async publishBreakpointChanges(): Promise<void> {
+  private publishBreakpointChanges(): void {
     const projection = createBreakpointProjection(this.list())
-    await Promise.allSettled(
-      Array.from(this.breakpointListeners).map((listener) =>
-        listener(projection),
-      ),
-    )
+    this.breakpointListeners.forEach((listener) => {
+      try {
+        listener(projection)
+      } catch {
+        // Editor events must not fail the debugger operation that produced them.
+      }
+    })
   }
 }
 

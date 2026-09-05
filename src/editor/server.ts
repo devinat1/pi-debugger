@@ -20,6 +20,7 @@ export class SharedDebugServer {
   private decoder = new DapMessageDecoder()
   private finish: (() => void) | null = null
   private isApplyingBreakpoints = false
+  private isAuthenticated = false
   private isConfigured = false
   private isStopped = false
   private nextBreakpointId = 1
@@ -34,6 +35,8 @@ export class SharedDebugServer {
       input: Readable
       output: Writable
       sessions: SessionManager
+      token: string
+      onAuthenticated?: () => void
     },
   ) {}
 
@@ -88,6 +91,15 @@ export class SharedDebugServer {
       return
     }
     if (request.command === "launch" || request.command === "attach") {
+      if (stringValue(request.arguments?.piDebuggerToken) !== this.options.token) {
+        throw new Error(
+          "Editor authentication failed. Rerun `pi-debugger setup` and reload Pi.",
+        )
+      }
+      if (!this.isAuthenticated) {
+        this.isAuthenticated = true
+        this.options.onAuthenticated?.()
+      }
       this.bindOnlyNodeSession()
       this.sendResponse({ request })
       this.sendEvent({
@@ -99,6 +111,9 @@ export class SharedDebugServer {
         },
       })
       return
+    }
+    if (!this.isAuthenticated && request.command !== "disconnect") {
+      throw new Error("The editor must authenticate before using the debugger.")
     }
     if (request.command === "configurationDone") {
       const session = this.requireSession()
@@ -241,7 +256,7 @@ export class SharedDebugServer {
     if (!session) throw new Error("Node debug session not found.")
     this.session = session
     this.unsubscribe.push(
-      this.options.sessions.onBreakpointsChanged(async () => {
+      this.options.sessions.onBreakpointsChanged(() => {
         if (this.isConfigured && !this.isApplyingBreakpoints) {
           this.emitBreakpointChanges(this.currentBreakpoints())
         }

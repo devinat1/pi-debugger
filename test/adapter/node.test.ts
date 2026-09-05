@@ -9,6 +9,14 @@ const serverSource = resolve("test/fixtures/next/dist/bin/server.ts")
 const lazySource = resolve("test/fixtures/next/app/lazy.ts")
 
 describe("NodeAdapter", () => {
+  it("cancels the pause waiter when execution cannot start", async () => {
+    const adapter = new NodeAdapter({ pauseTimeout: 20 })
+    await expect(adapter.continue()).rejects.toThrow(
+      "The program is already running.",
+    )
+    await Bun.sleep(40)
+  })
+
   it("does not reject a pause waiter after launch already failed", async () => {
     const adapter = new NodeAdapter({
       inspectorTimeout: 20,
