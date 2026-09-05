@@ -22,64 +22,31 @@ import {
 } from "jsonc-parser/lib/esm/main.js"
 import { findFreePort } from "../util/port"
 import { isRecord } from "../util/value"
-import { EDITOR_CONFIGURATION_FILE } from "../editor/config"
-
-export type SupportedEditor = "vscode" | "zed"
+import { EDITOR_PROFILE_NAME } from "./config"
 
 export interface EditorSetupResult {
-  editor: SupportedEditor
   port: number
+  token: string
   workspace: string
 }
 
-const DEBUG_PROFILE_NAME = "Pi debugger"
 const LEGACY_PROFILE_NAME = "Pi breakpoint mirror"
 
-export async function setupEditor(options: {
-  editor: SupportedEditor
-  executable?: string
+export async function setupVsCode(options: {
   workspace: string
   port?: number
 }): Promise<EditorSetupResult> {
   const workspace = await existingDirectory(options.workspace)
   const port = options.port ?? await findFreePort()
-  if (options.editor === "zed") {
-    await setupZed({ workspace, port })
-  } else {
-    await setupVsCode({ workspace, port })
-  }
-  await writeEditorConfiguration({ workspace, port })
-  return { editor: options.editor, port, workspace }
+  const token = randomUUID()
+  await writeVsCodeProfile({ workspace, port, token })
+  return { port, token, workspace }
 }
 
-async function setupZed(options: {
+async function writeVsCodeProfile(options: {
   workspace: string
   port: number
-}): Promise<void> {
-  const file = join(options.workspace, ".zed", "debug.json")
-  await updateNamedArray({
-    file,
-    defaultText: "[]\n",
-    arrayPath: [],
-    identityProperty: "label",
-    identityValues: [DEBUG_PROFILE_NAME, LEGACY_PROFILE_NAME],
-    entry: {
-      label: DEBUG_PROFILE_NAME,
-      adapter: "JavaScript",
-      type: "node",
-      request: "launch",
-      program: options.workspace,
-      tcp_connection: {
-        host: "127.0.0.1",
-        port: options.port,
-      },
-    },
-  })
-}
-
-async function setupVsCode(options: {
-  workspace: string
-  port: number
+  token: string
 }): Promise<void> {
   const launchFile = join(options.workspace, ".vscode", "launch.json")
   await updateNamedArray({
@@ -87,13 +54,14 @@ async function setupVsCode(options: {
     defaultText: '{\n  "version": "0.2.0",\n  "configurations": []\n}\n',
     arrayPath: ["configurations"],
     identityProperty: "name",
-    identityValues: [DEBUG_PROFILE_NAME, LEGACY_PROFILE_NAME],
+    identityValues: [EDITOR_PROFILE_NAME, LEGACY_PROFILE_NAME],
     entry: {
-      name: DEBUG_PROFILE_NAME,
+      name: EDITOR_PROFILE_NAME,
       type: "node",
       request: "launch",
       program: options.workspace,
       debugServer: options.port,
+      piDebuggerToken: options.token,
     },
   })
 }
@@ -158,24 +126,6 @@ async function updateNamedArray(options: {
   )
   await writeConfiguration({
     file: options.file,
-    expectedDiskSource: document.diskSource,
-    updated,
-  })
-}
-
-async function writeEditorConfiguration(options: {
-  workspace: string
-  port: number
-}): Promise<void> {
-  const file = join(options.workspace, EDITOR_CONFIGURATION_FILE)
-  const document = await readTextOrDefault({ file, defaultText: "{}\n" })
-  const formattingOptions = formattingFor(document.source)
-  const updated = applyEdits(
-    document.source,
-    modify(document.source, ["editorPort"], options.port, { formattingOptions }),
-  )
-  await writeConfiguration({
-    file,
     expectedDiskSource: document.diskSource,
     updated,
   })

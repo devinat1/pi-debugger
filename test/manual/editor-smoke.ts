@@ -17,7 +17,7 @@ await sessions.setBreakpoints({
 })
 const bridge = await startConfiguredEditorBridge({ workspace, sessions })
 if (!bridge) {
-  throw new Error("Run pi-debugger setup --editor vscode before this smoke test.")
+  throw new Error("Run pi-debugger setup before this smoke test.")
 }
 
 process.stdout.write(

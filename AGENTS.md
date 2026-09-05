@@ -3,7 +3,7 @@
 ## Scope
 
 - This is a standalone TypeScript pi package. Frontend, JSX, Tailwind, meeting ownership, Prisma, email-type placement, and component-fetch rules do not apply unless those domains are added later.
-- Keep runtime control tools-only except for the Node shared-session DAP bridge used by the generated VS Code/Cursor profile. The bridge may synchronize breakpoints and forward continue, pause, and step commands to the single live Node session. Keep editor extensions, Python/Go editor control, multiple editor clients, MCP servers, phase machines, teaching modes, and custom TUIs out of the package.
+- Keep runtime control tools-only except for the Node shared-session DAP bridge used by the generated VS Code/Cursor profile. The bridge may synchronize breakpoints and forward continue, pause, and step commands to the single live Node session. Keep editor extensions, Zed profiles, Python/Go editor control, multiple editor clients, breakpoint snapshot mirrors, MCP servers, phase machines, teaching modes, and custom TUIs out of the package.
 - Preserve independent named debugger sessions. Creating or attaching a session must not stop another session, and every later debugger operation must require `sessionId`.
 - Do not modify the humancode repository. Reuse its debugger behavior here without adding a runtime dependency on a humancode checkout.
 

@@ -1,6 +1,6 @@
 {
   "name": "@devinat1/pi-debugger",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Native DAP debugger tools for the pi coding agent",
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "delve"
   ],
   "files": [
-    "dist",
+    "dist/pi-debugger.js",
     "extensions",
     "src",
     "samples/node/app.js",
@@ -33,14 +33,13 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "build:mirror": "bun build src/mirror/cli.ts --target=node --outfile=dist/pi-debugger-breakpoint-mirror.js",
-    "check": "bun run typecheck && bun run build:mirror && bun test",
-    "prepare": "bun run build:mirror",
+    "build:cli": "bun build src/editor/cli.ts --target=node --outfile=dist/pi-debugger.js",
+    "check": "bun run typecheck && bun run build:cli && bun test",
+    "prepare": "bun run build:cli",
     "pack:check": "npm pack --dry-run"
   },
   "bin": {
-    "pi-debugger": "./dist/pi-debugger-breakpoint-mirror.js",
-    "pi-debugger-breakpoint-mirror": "./dist/pi-debugger-breakpoint-mirror.js"
+    "pi-debugger": "./dist/pi-debugger.js"
   },
   "pi": {
     "extensions": [

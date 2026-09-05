@@ -18,7 +18,9 @@ import type { StackFrame, Variable } from "../../src/dap/types"
 import { NodeAdapter } from "../../src/adapter/node"
 import { SharedDebugServer } from "../../src/editor/server"
 import { SessionManager } from "../../src/session/manager"
-import { collectMessages, sendRequest } from "../mirror/support"
+import { collectMessages, sendRequest } from "../support/dap"
+
+const EDITOR_TOKEN = "test-editor-token"
 
 class FakeSharedNodeAdapter implements DebugAdapter {
   readonly id: AdapterType = "node"
@@ -117,14 +119,23 @@ describe("SharedDebugServer", () => {
     })
     const input = new PassThrough()
     const output = new PassThrough()
-    const server = new SharedDebugServer({ input, output, sessions })
+    const server = new SharedDebugServer({
+      input,
+      output,
+      sessions,
+      token: EDITOR_TOKEN,
+    })
     const messages = collectMessages(output)
     const running = server.run()
 
     sendRequest(input, { seq: 1, command: "initialize" })
     expect((await messages.nextResponse(1)).success).toBe(true)
     await messages.nextEvent("initialized")
-    sendRequest(input, { seq: 2, command: "launch" })
+    sendRequest(input, {
+      seq: 2,
+      command: "launch",
+      arguments: { piDebuggerToken: EDITOR_TOKEN },
+    })
     expect((await messages.nextResponse(2)).success).toBe(true)
     sendRequest(input, { seq: 3, command: "configurationDone" })
     expect((await messages.nextResponse(3)).success).toBe(true)
@@ -185,14 +196,23 @@ describe("SharedDebugServer", () => {
     })
     const input = new PassThrough()
     const output = new PassThrough()
-    const server = new SharedDebugServer({ input, output, sessions })
+    const server = new SharedDebugServer({
+      input,
+      output,
+      sessions,
+      token: EDITOR_TOKEN,
+    })
     const messages = collectMessages(output)
     const running = server.run()
     try {
       sendRequest(input, { seq: 1, command: "initialize" })
       await messages.nextResponse(1)
       await messages.nextEvent("initialized")
-      sendRequest(input, { seq: 2, command: "launch" })
+      sendRequest(input, {
+        seq: 2,
+        command: "launch",
+        arguments: { piDebuggerToken: EDITOR_TOKEN },
+      })
       await messages.nextResponse(2)
       sendRequest(input, {
         seq: 3,
@@ -223,4 +243,42 @@ describe("SharedDebugServer", () => {
       await sessions.stopAll()
     }
   }, 15_000)
+
+  it("rejects a client without the configured editor token", async () => {
+    const adapter = new FakeSharedNodeAdapter()
+    const sessions = new SessionManager(() => adapter)
+    await sessions.launch({
+      config: { type: "node", program: "app.js" },
+      name: "app",
+    })
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const server = new SharedDebugServer({
+      input,
+      output,
+      sessions,
+      token: EDITOR_TOKEN,
+    })
+    const messages = collectMessages(output)
+    const running = server.run()
+
+    sendRequest(input, { seq: 1, command: "initialize" })
+    await messages.nextResponse(1)
+    await messages.nextEvent("initialized")
+    sendRequest(input, {
+      seq: 2,
+      command: "launch",
+      arguments: { piDebuggerToken: "wrong-token" },
+    })
+    const rejected = await messages.nextResponse(2)
+    expect(rejected.success).toBe(false)
+    expect(rejected.message).toContain("authentication failed")
+    sendRequest(input, { seq: 3, command: "threads" })
+    expect((await messages.nextResponse(3)).success).toBe(false)
+
+    sendRequest(input, { seq: 4, command: "disconnect" })
+    await messages.nextResponse(4)
+    await running
+    await sessions.stopAll()
+  })
 })
