@@ -17,8 +17,10 @@ export interface SessionState {
   mode: "launch" | "attach"
   adapter: DebugAdapter
   breakpoints: Map<string, BreakpointInfo[]>
+  executionState: "stopped" | "running" | "terminated"
   stoppedThreadId: number | null
   stoppedReason: string | null
+  stoppedLocation: StoppedInfo["location"] | null
 }
 
 export function createSessionState(options: {
@@ -33,8 +35,10 @@ export function createSessionState(options: {
     mode: options.mode,
     adapter: options.adapter,
     breakpoints: new Map(),
+    executionState: "stopped",
     stoppedThreadId: null,
     stoppedReason: null,
+    stoppedLocation: null,
   }
 }
 
@@ -42,8 +46,24 @@ export function recordStop(options: {
   state: SessionState
   event: StoppedInfo
 }): void {
+  options.state.executionState = "stopped"
   options.state.stoppedThreadId = options.event.threadId ?? null
   options.state.stoppedReason = options.event.reason
+  options.state.stoppedLocation = options.event.location ?? null
+}
+
+export function recordContinue(state: SessionState): void {
+  state.executionState = "running"
+  state.stoppedThreadId = null
+  state.stoppedReason = null
+  state.stoppedLocation = null
+}
+
+export function recordTermination(state: SessionState): void {
+  state.executionState = "terminated"
+  state.stoppedThreadId = null
+  state.stoppedReason = null
+  state.stoppedLocation = null
 }
 
 export function getAllBreakpoints(

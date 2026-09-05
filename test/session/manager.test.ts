@@ -57,8 +57,9 @@ class FakeAdapter implements DebugAdapter {
   async disconnect(): Promise<void> {
     this.isDisconnected = true
   }
-  onStopped(callback: (event: StoppedInfo) => void): void {
+  onStopped(callback: (event: StoppedInfo) => void): () => void {
     this.callbacks.add(callback)
+    return () => this.callbacks.delete(callback)
   }
 }
 

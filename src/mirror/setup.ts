@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { constants, type Stats } from "node:fs"
+import { type Stats } from "node:fs"
 import {
-  access,
   lstat,
   mkdir,
   readFile,
@@ -23,6 +22,7 @@ import {
 } from "jsonc-parser/lib/esm/main.js"
 import { findFreePort } from "../util/port"
 import { isRecord } from "../util/value"
+import { EDITOR_CONFIGURATION_FILE } from "../editor/config"
 
 export type SupportedEditor = "vscode" | "zed"
 
@@ -32,39 +32,29 @@ export interface EditorSetupResult {
   workspace: string
 }
 
-const MIRROR_PROFILE_NAME = "Pi breakpoint mirror"
-const MIRROR_TASK_NAME = "Start Pi breakpoint mirror"
+const DEBUG_PROFILE_NAME = "Pi debugger"
+const LEGACY_PROFILE_NAME = "Pi breakpoint mirror"
 
 export async function setupEditor(options: {
   editor: SupportedEditor
-  executable: string
+  executable?: string
   workspace: string
   port?: number
 }): Promise<EditorSetupResult> {
   const workspace = await existingDirectory(options.workspace)
-  const executable = await executableFile(options.executable)
   const port = options.port ?? await findFreePort()
-  const serveArguments = [
-    "serve",
-    "--workspace",
-    workspace,
-    "--port",
-    String(port),
-    "--detach",
-  ]
   if (options.editor === "zed") {
-    await setupZed({ workspace, executable, port, serveArguments })
+    await setupZed({ workspace, port })
   } else {
-    await setupVsCode({ workspace, executable, port, serveArguments })
+    await setupVsCode({ workspace, port })
   }
+  await writeEditorConfiguration({ workspace, port })
   return { editor: options.editor, port, workspace }
 }
 
 async function setupZed(options: {
   workspace: string
-  executable: string
   port: number
-  serveArguments: string[]
 }): Promise<void> {
   const file = join(options.workspace, ".zed", "debug.json")
   await updateNamedArray({
@@ -72,9 +62,9 @@ async function setupZed(options: {
     defaultText: "[]\n",
     arrayPath: [],
     identityProperty: "label",
-    identityValue: MIRROR_PROFILE_NAME,
+    identityValues: [DEBUG_PROFILE_NAME, LEGACY_PROFILE_NAME],
     entry: {
-      label: MIRROR_PROFILE_NAME,
+      label: DEBUG_PROFILE_NAME,
       adapter: "JavaScript",
       type: "node",
       request: "launch",
@@ -83,49 +73,27 @@ async function setupZed(options: {
         host: "127.0.0.1",
         port: options.port,
       },
-      build: {
-        command: options.executable,
-        args: options.serveArguments,
-      },
     },
   })
 }
 
 async function setupVsCode(options: {
   workspace: string
-  executable: string
   port: number
-  serveArguments: string[]
 }): Promise<void> {
   const launchFile = join(options.workspace, ".vscode", "launch.json")
-  const tasksFile = join(options.workspace, ".vscode", "tasks.json")
   await updateNamedArray({
     file: launchFile,
     defaultText: '{\n  "version": "0.2.0",\n  "configurations": []\n}\n',
     arrayPath: ["configurations"],
     identityProperty: "name",
-    identityValue: MIRROR_PROFILE_NAME,
+    identityValues: [DEBUG_PROFILE_NAME, LEGACY_PROFILE_NAME],
     entry: {
-      name: MIRROR_PROFILE_NAME,
+      name: DEBUG_PROFILE_NAME,
       type: "node",
       request: "launch",
       program: options.workspace,
       debugServer: options.port,
-      preLaunchTask: MIRROR_TASK_NAME,
-    },
-  })
-  await updateNamedArray({
-    file: tasksFile,
-    defaultText: '{\n  "version": "2.0.0",\n  "tasks": []\n}\n',
-    arrayPath: ["tasks"],
-    identityProperty: "label",
-    identityValue: MIRROR_TASK_NAME,
-    entry: {
-      label: MIRROR_TASK_NAME,
-      type: "process",
-      command: options.executable,
-      args: options.serveArguments,
-      problemMatcher: [],
     },
   })
 }
@@ -135,7 +103,7 @@ async function updateNamedArray(options: {
   defaultText: string
   arrayPath: JSONPath
   identityProperty: string
-  identityValue: string
+  identityValues: string[]
   entry: Record<string, unknown>
 }): Promise<void> {
   const document = await readTextOrDefault({
@@ -176,7 +144,7 @@ async function updateNamedArray(options: {
   const existingIndex = arrayWithEntries.findIndex(
     (value) =>
       isRecord(value) &&
-      value[options.identityProperty] === options.identityValue,
+      options.identityValues.includes(String(value[options.identityProperty])),
   )
   const entryIndex = existingIndex >= 0 ? existingIndex : arrayWithEntries.length
   const updated = applyEdits(
@@ -190,6 +158,24 @@ async function updateNamedArray(options: {
   )
   await writeConfiguration({
     file: options.file,
+    expectedDiskSource: document.diskSource,
+    updated,
+  })
+}
+
+async function writeEditorConfiguration(options: {
+  workspace: string
+  port: number
+}): Promise<void> {
+  const file = join(options.workspace, EDITOR_CONFIGURATION_FILE)
+  const document = await readTextOrDefault({ file, defaultText: "{}\n" })
+  const formattingOptions = formattingFor(document.source)
+  const updated = applyEdits(
+    document.source,
+    modify(document.source, ["editorPort"], options.port, { formattingOptions }),
+  )
+  await writeConfiguration({
+    file,
     expectedDiskSource: document.diskSource,
     updated,
   })
@@ -331,23 +317,6 @@ async function existingDirectory(directory: string): Promise<string> {
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
       throw new Error(`Workspace ${absoluteDirectory} does not exist.`)
-    }
-    throw error
-  }
-}
-
-async function executableFile(file: string): Promise<string> {
-  const absoluteFile = resolve(file)
-  try {
-    const canonicalFile = await realpath(absoluteFile)
-    await access(canonicalFile, constants.X_OK)
-    return canonicalFile
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") {
-      throw new Error(`Mirror executable ${absoluteFile} does not exist.`)
-    }
-    if (errorCode(error) === "EACCES") {
-      throw new Error(`Mirror executable ${absoluteFile} is not executable.`)
     }
     throw error
   }

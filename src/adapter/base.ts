@@ -51,7 +51,10 @@ export interface StoppedInfo {
   reason: string
   threadId?: number
   description?: string
+  location?: StopResult["location"]
 }
+
+export type ExecutionCommand = "continue" | "next" | "stepIn" | "stepOut"
 
 export interface BreakpointResult {
   id?: number
@@ -94,5 +97,12 @@ export interface DebugAdapter {
   getVariables(options?: GetVariablesOptions): Promise<Variable[]>
   evaluate(options: EvaluateOptions): Promise<EvalResult>
   disconnect(): Promise<void>
-  onStopped(callback: (event: StoppedInfo) => void): void
+  onStopped(callback: (event: StoppedInfo) => void): () => void
+  startExecution?(options: {
+    command: ExecutionCommand
+    threadId?: number
+  }): Promise<void>
+  pause?(options?: ThreadOptions): Promise<void>
+  onContinued?(callback: (threadId: number) => void): () => void
+  onTerminated?(callback: () => void): () => void
 }

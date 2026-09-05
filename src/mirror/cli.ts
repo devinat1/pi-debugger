@@ -24,11 +24,10 @@ async function runCommand(): Promise<void> {
   if (command.kind === "setup") {
     const result = await setupEditor({
       editor: command.editor,
-      executable: await currentExecutable(),
       workspace: command.workspace,
     })
     process.stdout.write(
-      `Configured ${result.editor} profile "Pi breakpoint mirror" in ${result.workspace}.\n`,
+      `Configured ${result.editor} profile "Pi debugger" in ${result.workspace}.\n`,
     )
     return
   }

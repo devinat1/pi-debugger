@@ -31,23 +31,12 @@ describe("setupEditor", () => {
       expect(result.port).toBe(43121)
       expect(configuration).toEqual([
         {
-          label: "Pi breakpoint mirror",
+          label: "Pi debugger",
           adapter: "JavaScript",
           type: "node",
           request: "launch",
           program: result.workspace,
           tcp_connection: { host: "127.0.0.1", port: 43121 },
-          build: {
-            command: EXECUTABLE,
-            args: [
-              "serve",
-              "--workspace",
-              result.workspace,
-              "--port",
-              "43121",
-              "--detach",
-            ],
-          },
         },
       ])
     } finally {
@@ -105,15 +94,15 @@ describe("setupEditor", () => {
       expect(launchText).toContain("Keep this launch profile")
       expect(tasksText).toContain("Keep this task")
       expect(launchEntries.map(recordValue).filter(Boolean)).toHaveLength(2)
-      expect(taskEntries.map(recordValue).filter(Boolean)).toHaveLength(2)
+      expect(taskEntries.map(recordValue).filter(Boolean)).toHaveLength(1)
       expect(namedEntry(launchEntries, "name", "Existing")).toBeDefined()
       expect(namedEntry(taskEntries, "label", "Existing task")).toBeDefined()
       expect(
-        namedEntry(launchEntries, "name", "Pi breakpoint mirror")?.debugServer,
+        namedEntry(launchEntries, "name", "Pi debugger")?.debugServer,
       ).toBe(43123)
       expect(
-        namedEntry(taskEntries, "label", "Start Pi breakpoint mirror")?.args,
-      ).toContain("43123")
+        JSON.parse(await readFile(join(workspace, ".pi-debugger.json"), "utf8")),
+      ).toEqual({ editorPort: 43123 })
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }

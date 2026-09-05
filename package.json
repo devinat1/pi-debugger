@@ -39,6 +39,7 @@
     "pack:check": "npm pack --dry-run"
   },
   "bin": {
+    "pi-debugger": "./dist/pi-debugger-breakpoint-mirror.js",
     "pi-debugger-breakpoint-mirror": "./dist/pi-debugger-breakpoint-mirror.js"
   },
   "pi": {

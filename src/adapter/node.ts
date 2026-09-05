@@ -18,6 +18,7 @@ import type {
   DebugAdapter,
   EvalResult,
   EvaluateOptions,
+  ExecutionCommand,
   GetVariablesOptions,
   LaunchConfig,
   SetBreakpointsOptions,
@@ -75,6 +76,7 @@ export class NodeAdapter implements DebugAdapter {
     }
   >()
   private stoppedCallbacks = new Set<(event: StoppedInfo) => void>()
+  private continuedCallbacks = new Set<(threadId: number) => void>()
   private terminatedCallbacks = new Set<() => void>()
   private scripts = new Map<string, string>()
   private sourceMaps = new Map<string, LoadedSourceMap>()
@@ -245,19 +247,19 @@ export class NodeAdapter implements DebugAdapter {
   }
 
   async continue(): Promise<StopResult> {
-    return this.resume("Debugger.resume")
+    return this.resume("continue")
   }
 
   async stepOver(): Promise<StopResult> {
-    return this.resume("Debugger.stepOver")
+    return this.resume("next")
   }
 
   async stepIn(): Promise<StopResult> {
-    return this.resume("Debugger.stepInto")
+    return this.resume("stepIn")
   }
 
   async stepOut(): Promise<StopResult> {
-    return this.resume("Debugger.stepOut")
+    return this.resume("stepOut")
   }
 
   async getCallStack(): Promise<StackFrame[]> {
@@ -342,14 +344,52 @@ export class NodeAdapter implements DebugAdapter {
   async disconnect(): Promise<void> {
     this.sourceMapWatcher?.close()
     this.sourceMapWatcher = null
-    this.webSocket?.close()
+    const webSocket = this.webSocket
     this.webSocket = null
+    webSocket?.close()
+    this.terminatedCallbacks.forEach((callback) => callback())
+    this.terminatedCallbacks.clear()
     if (this.isProcessOwned) this.process?.kill()
     this.process = null
   }
 
-  onStopped(callback: (event: StoppedInfo) => void): void {
+  onStopped(callback: (event: StoppedInfo) => void): () => void {
     this.stoppedCallbacks.add(callback)
+    return () => this.stoppedCallbacks.delete(callback)
+  }
+
+  onContinued(callback: (threadId: number) => void): () => void {
+    this.continuedCallbacks.add(callback)
+    return () => this.continuedCallbacks.delete(callback)
+  }
+
+  onTerminated(callback: () => void): () => void {
+    this.terminatedCallbacks.add(callback)
+    return () => this.terminatedCallbacks.delete(callback)
+  }
+
+  async startExecution(options: {
+    command: ExecutionCommand
+  }): Promise<void> {
+    if (!this.isPaused) throw new Error("The program is already running.")
+    const methods: Record<ExecutionCommand, string> = {
+      continue: "Debugger.resume",
+      next: "Debugger.stepOver",
+      stepIn: "Debugger.stepInto",
+      stepOut: "Debugger.stepOut",
+    }
+    this.isPaused = false
+    try {
+      await this.cdpSend({ method: methods[options.command], parameters: {} })
+    } catch (error) {
+      this.isPaused = true
+      throw error
+    }
+  }
+
+  async pause(): Promise<void> {
+    if (this.isPaused) return
+    await this.cdpSend({ method: "Debugger.pause", parameters: {} })
   }
 
   private async enableDebugger(): Promise<void> {
@@ -634,10 +674,9 @@ export class NodeAdapter implements DebugAdapter {
     currentWebSocket?.close()
   }
 
-  private async resume(method: string): Promise<StopResult> {
+  private async resume(command: ExecutionCommand): Promise<StopResult> {
     const pause = this.waitForPause()
-    this.isPaused = false
-    await this.cdpSend({ method, parameters: {} })
+    await this.startExecution({ command })
     return pause
   }
 
@@ -757,17 +796,31 @@ export class NodeAdapter implements DebugAdapter {
         .map(recordValue)
         .filter((frame) => frame !== undefined)
       const reason = stringValue(parameters.reason) ?? "breakpoint"
-      const info = {
-        reason,
-        threadId: 1,
-      }
-      this.stoppedCallbacks.forEach((callback) => callback(info))
+      void this.emitStopped({ reason, threadId: 1 })
       return
     }
     if (method === "Debugger.resumed") {
       this.isPaused = false
       this.pausedFrames = []
+      this.continuedCallbacks.forEach((callback) => callback(1))
     }
+  }
+
+  private async emitStopped(info: StoppedInfo): Promise<void> {
+    await Promise.all(this.sourceMapLoads.values())
+    const frame = (await this.getCallStack())[0]
+    const event = {
+      ...info,
+      location: frame
+        ? {
+            file: frame.source?.path,
+            line: frame.line,
+            column: frame.column,
+            name: frame.name,
+          }
+        : undefined,
+    }
+    this.stoppedCallbacks.forEach((callback) => callback(event))
   }
 
   private waitForPause(): Promise<StopResult> {

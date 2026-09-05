@@ -227,47 +227,39 @@ debug_get_call_stack({ sessionId: "debug-1" })
 debug_get_variables({ sessionId: "debug-2" })
 ```
 
-## Editor breakpoint mirror
+## VS Code and Cursor shared debugging
 
-pi-debugger can show pi-created source breakpoints as native markers in Zed or
-VS Code without installing an editor extension. Run one setup command from the
-workspace root:
+Run this once from the project you want to debug:
 
 ```sh
-pi-debugger-breakpoint-mirror setup --editor zed
-# or
-pi-debugger-breakpoint-mirror setup --editor vscode
+pi-debugger setup --editor vscode
 ```
 
-`--editor` is required. Use `--workspace /absolute/path` when running the
-command outside the target workspace.
+Then use the shared session:
 
-Then:
+1. Start pi in the same project and ask it to start one Node debug session.
+2. Open Run and Debug in VS Code or Cursor.
+3. Select **Pi debugger** and press Start.
 
-1. Start pi in the same workspace and create breakpoints through pi.
-2. Open the editor's debugger and start **Pi breakpoint mirror**.
-3. Leave that debug session open while pi adds, removes, or verifies breakpoints.
+The editor connects to the Node process already controlled by Pi. Breakpoints
+created in either place appear in both places. Continue, pause, Step Over, Step
+Into, and Step Out operate on that same process. A second execution command
+while the program is already running fails instead of being queued.
+
+Setup preserves other `.vscode/launch.json` entries and writes the selected
+loopback port to `.pi-debugger.json`. Rerun setup to choose a new free port.
+No editor extension and no manual port entry are required.
+
+This first shared-control milestone supports one Node session and one editor
+client. Python, Go, and multiple simultaneous Node sessions remain available to
+Pi tools, but they cannot be controlled from the editor yet.
 
 For a package checkout, build and run the local executable instead:
 
 ```sh
 bun run build:mirror
-./dist/pi-debugger-breakpoint-mirror.js setup --editor zed
+./dist/pi-debugger-breakpoint-mirror.js setup --editor vscode
 ```
-
-Setup creates or updates one named entry in `.zed/debug.json`, or one named entry
-each in `.vscode/launch.json` and `.vscode/tasks.json`. Other entries and JSONC
-comments are preserved. The generated profile contains absolute workspace and
-executable paths, so rerun setup after moving the package or copying the project
-to another machine.
-
-The profile starts a one-client DAP server on `127.0.0.1` and uses the editor's
-built-in JavaScript debugger identity to connect to it. The server exits after
-the editor disconnects or after 30 seconds without a connection. It never
-connects to Node, debugpy, or Delve, so it cannot compete with pi for pause,
-continue, or stepping control. The displayed markers are the deduplicated union
-from every live pi session in the workspace. Editor changes remain read-only;
-pi stays authoritative.
 
 ## Maintainer checks
 
@@ -282,6 +274,7 @@ bun run test/manual/attach-smoke.ts python
 bun run test/manual/attach-smoke.ts go
 bun run test/manual/attach-smoke.ts go port
 bun run test/manual/multi-session-smoke.ts
+bun run test/manual/editor-smoke.ts
 npm pack --dry-run
 ```
 
@@ -289,7 +282,7 @@ The manual smoke tests exercise breakpoint, continue, variables, and stack inspe
 
 ## Security
 
-Debugger protocols can execute code in the target process. Bind inspector, debugpy, and Delve ports to `127.0.0.1`; use an authenticated tunnel for remote targets. The breakpoint mirror writes only absolute source paths and breakpoint locations to per-process files under the operating system's temporary directory, and removes its file during a clean pi shutdown.
+Debugger protocols can execute code in the target process. The editor bridge binds only to `127.0.0.1`. Bind inspector, debugpy, and Delve ports to `127.0.0.1`; use an authenticated tunnel for remote targets. Breakpoint snapshots contain only absolute source paths and breakpoint locations and are removed during a clean pi shutdown.
 
 ## License
 

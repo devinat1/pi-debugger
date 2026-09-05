@@ -274,8 +274,9 @@ export abstract class TcpDapAdapter
     this.adapterProcess = null
   }
 
-  onStopped(callback: (event: StoppedInfo) => void): void {
+  onStopped(callback: (event: StoppedInfo) => void): () => void {
     this.stoppedCallbacks.add(callback)
+    return () => this.stoppedCallbacks.delete(callback)
   }
 
   private async resume(options: {

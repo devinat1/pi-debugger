@@ -13,7 +13,9 @@ import {
 import { createAdapter, detectType } from "../adapter/registry"
 import {
   createSessionState,
+  recordContinue,
   recordStop,
+  recordTermination,
   type BreakpointInfo,
   type SessionState,
 } from "./state"
@@ -112,6 +114,29 @@ export class SessionManager {
     return updated
   }
 
+  async replaceBreakpoints(options: {
+    sessionId: string
+    file: string
+    breakpoints: SetBreakpointsOptions["breakpoints"]
+  }): Promise<BreakpointInfo[]> {
+    const session = this.require(options.sessionId)
+    const results = await session.adapter.setBreakpoints({
+      file: options.file,
+      breakpoints: options.breakpoints,
+    })
+    const updated = options.breakpoints.map((item, index) => ({
+      ...item,
+      id: results[index]?.id,
+      verified: results[index]?.verified ?? false,
+      line: results[index]?.line ?? item.line,
+      message: results[index]?.message,
+    }))
+    if (updated.length > 0) session.breakpoints.set(options.file, updated)
+    else session.breakpoints.delete(options.file)
+    await this.publishBreakpointChanges()
+    return updated
+  }
+
   async removeBreakpoints(options: {
     sessionId: string
     file: string
@@ -168,6 +193,8 @@ export class SessionManager {
       name: options.name,
     })
     options.adapter.onStopped((event) => recordStop({ state: session, event }))
+    options.adapter.onContinued?.(() => recordContinue(session))
+    options.adapter.onTerminated?.(() => recordTermination(session))
     try {
       await options.start(options.adapter)
       const initialStop = await options.adapter.waitForInitialPause()
